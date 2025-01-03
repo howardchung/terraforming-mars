@@ -7,7 +7,8 @@ import {CardName} from '../../common/cards/CardName';
 import {SelectInitialCardsModel} from '../../common/models/PlayerInputModel';
 import {InputError} from './InputError';
 import {OptionsInput} from './OptionsPlayerInput';
-import {InputResponse, isSelectInitialCardsResponse} from '../../common/inputs/InputResponse';
+import {InputResponse, isSelectInitialCardsResponse, SelectInitialCardsResponse} from '../../common/inputs/InputResponse';
+import { ICard } from '../cards/ICard';
 
 export class SelectInitialCards extends OptionsInput<undefined> {
   constructor(private player: IPlayer, cb: (corporation: ICorporationCard) => undefined) {
@@ -128,5 +129,14 @@ export class SelectInitialCards extends OptionsInput<undefined> {
       player.runInput(input.responses[i], this.options[i]);
     }
     return this.cb(undefined);
+  }
+
+  public agent(p: IPlayer) {
+    const response: SelectInitialCardsResponse = {
+      "type":"initialCards",
+      "responses": this.options.map(opt => ({ type: 'card', responses: (opt as SelectCard<ICard>).agent()})) as unknown as InputResponse[],
+    };
+    console.log(JSON.stringify(response));
+    this.process(response, p)
   }
 }

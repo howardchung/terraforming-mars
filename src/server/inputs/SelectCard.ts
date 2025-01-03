@@ -80,4 +80,8 @@ export class SelectCard<T extends ICard> extends BasePlayerInput<ReadonlyArray<T
     }
     return this.cb(cards);
   }
+
+  public agent(): CardName[] {
+    return [this.cards[0].name];
+  }
 }

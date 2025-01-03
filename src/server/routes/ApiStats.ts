@@ -8,12 +8,13 @@ import {Response} from '../Response';
 export class ApiStats extends Handler {
   public static readonly INSTANCE = new ApiStats();
   private constructor() {
-    super({validateStatsId: true});
+    super();
   }
 
   public override async get(req: Request, res: Response, _ctx: Context): Promise<void> {
     try {
       const stats = await Database.getInstance().stats();
+      res.setHeader('Access-Control-Allow-Origin', '*');
       responses.writeJson(res, stats, 2);
     } catch (err) {
       console.error(err);

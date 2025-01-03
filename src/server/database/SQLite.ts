@@ -6,8 +6,8 @@ import {IGame, Score} from '../IGame';
 import {GameOptions} from '../game/GameOptions';
 import {GameId, ParticipantId} from '../../common/Types';
 import {SerializedGame} from '../SerializedGame';
-
 import type * as sqlite3 from 'sqlite3';
+import {Database} from 'sqlite3';
 
 import {daysAgoToSeconds} from './utils';
 import {MultiMap} from 'mnemonist';
@@ -27,7 +27,6 @@ export class SQLite implements IDatabase {
   }
 
   public async initialize(): Promise<void> {
-    const {Database} = await import('sqlite3');
     const dbFolder = path.resolve(process.cwd(), './db');
     const dbPath = path.resolve(dbFolder, 'game.db');
     if (this.filename === undefined) {
@@ -38,6 +37,7 @@ export class SQLite implements IDatabase {
         fs.mkdirSync(dbFolder);
       }
     }
+    console.log(Database);
     this._db = new Database(String(this.filename));
     await this.asyncRun('CREATE TABLE IF NOT EXISTS games(game_id varchar, players integer, save_id integer, game text, status text default \'running\', created_time timestamp default (strftime(\'%s\', \'now\')), PRIMARY KEY (game_id, save_id))');
     await this.asyncRun('CREATE TABLE IF NOT EXISTS participants(game_id varchar, participant varchar, PRIMARY KEY (game_id, participant))');
@@ -217,14 +217,94 @@ export class SQLite implements IDatabase {
     return this.runQuietly('DELETE FROM games WHERE rowid IN (SELECT rowid FROM games WHERE game_id = ? ORDER BY save_id DESC LIMIT ?)', [gameId, rollbackCount]);
   }
 
-  public stats(): Promise<{[key: string]: string | number}> {
-    const size = this.filename === IN_MEMORY_SQLITE_PATH ? -1 : fs.statSync(String(this.filename)).size;
-
-    return Promise.resolve({
-      type: 'SQLite',
-      path: String(this.filename),
-      size_bytes: size,
+  public async stats(): Promise<any> {
+    const res = await this.asyncAll('SELECT * FROM completed_game');
+    const final = await Promise.all(res.map(async (r) => {
+      const g = await this.getGame(r.game_id);
+      const players = g.players.map(p => ({
+        id: p.id,
+        name: p.name,
+        color: p.color,
+        score: p.victoryPointsByGeneration.slice(-1)[0],
+        tieBreakScore: p.victoryPointsByGeneration.slice(-1)[0] + p.megaCredits / 1000000,
+        megaCredits: p.megaCredits,
+        corp: p.pickedCorporationCard,
+        actions: p.actionsTakenThisGame,
+        cardsPlayed: p.playedCards.length,
+        cards: p.playedCards.map(c => c.name),
+        timer: p.timer.sumElapsed,
+       }));
+      return {
+        gameId: r.game_id,
+        generations: g.generation, 
+        createdTimeMs: g.createdTimeMs,
+        durationMs: r.completed_time * 1000 - g.createdTimeMs,
+        claimedMilestones: g.claimedMilestones,
+        fundedAwards: g.fundedAwards,
+        map: g.gameOptions.boardName,
+        players,
+        winner: 0,
+    };
+    }));
+    // Load old game data
+    function processOldGames() {
+      // Loop through oldgames
+      const dir = fs.readdirSync("./oldgames");
+      const output: any[] = [];
+      dir.forEach((file) => {
+        const json = JSON.parse(fs.readFileSync("./oldgames/" + file).toString());
+        // Process each one into new data format
+        const players = json.players.map((p: any) => ({
+          id: p.id,
+          color: p.color,
+          actions: p.actionsTakenThisGame,
+          // Remove first card since it's a corp
+          cards: p.tableau.slice(1).map((c: any) => c.name),
+          cardsPlayed: p.tableau.length - 1,
+          corp: p.tableau[0].name,
+          name: p.name,
+          score: p.victoryPointsBreakdown.total,
+          tieBreakScore: p.victoryPointsBreakdown.total + p.megaCredits / 1000000,
+          megaCredits: p.megaCredits,
+          timer: p.timer.sumElapsed,
+        }));
+        output.push({
+          // TODO parse these from data
+          claimedMilestones: json.game.milestones.filter((ms: any) => ms.playerName).map((ms: any) => {
+            return {
+              name: ms.name,
+              playerId: json.players.find((p: any) => p.name === ms.playerName)?.id,
+            };
+          }),
+          fundedAwards: json.game.awards.filter((award: any) => award.playerName).map((award: any) => {
+            return {
+              name: award.name,
+              playerId: json.players.find((p: any) => p.name === award.playerName)?.id
+            };
+          }),
+          generations: json.game.generation,
+          createdTimeMs: json.game.expectedPurgeTimeMs - 17 * 24 * 60 * 60 * 1000,
+          durationMs:
+            json.players[0].timer.startedAt -
+            (json.game.expectedPurgeTimeMs - 17 * 24 * 60 * 60 * 1000),
+          map: json.game.gameOptions.boardName,
+          players,
+          winner: 0,
+        });
+      });
+      // Save as single output JSON array
+      return output;
+    }
+    final.push(...processOldGames());
+    final.sort(
+      (a, b) => b.createdTimeMs - a.createdTimeMs
+    );
+    // Add winner for each game (tiebreak by megacredits, assume players will never have more than 1000000)
+    final.forEach(f => {
+      const maxScore = Math.max(...f.players.map(p => p.tieBreakScore));
+      f.winner = f.players.findIndex((p) => p.tieBreakScore === maxScore);
     });
+    return { data: final };
   }
 
   public async storeParticipants(entry: GameIdLedger): Promise<void> {
