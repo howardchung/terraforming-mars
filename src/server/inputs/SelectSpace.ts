@@ -1,9 +1,11 @@
 import {Message} from '../../common/logs/Message';
 import {Space} from '../boards/Space';
-import {InputResponse, isSelectSpaceResponse} from '../../common/inputs/InputResponse';
+import {InputResponse, isSelectSpaceResponse, SelectSpaceResponse} from '../../common/inputs/InputResponse';
 import {SelectSpaceModel} from '../../common/models/PlayerInputModel';
 import {BasePlayerInput} from '../PlayerInput';
 import {InputError} from './InputError';
+import { IPlayer } from '../IPlayer';
+import { Random } from '@/common/utils/Random';
 
 export class SelectSpace extends BasePlayerInput<Space> {
   constructor(
@@ -33,5 +35,17 @@ export class SelectSpace extends BasePlayerInput<Space> {
       throw new InputError('Space not available');
     }
     return this.cb(space);
+  }
+
+  public getActionSpace(_p: IPlayer) {
+    return this.spaces.map(sp => ((typeof this.title === 'string') ? this.title : this.title?.message) + ' ' + sp.id);
+  }
+
+  public agent(algo: AgentAlgo, _p: IPlayer, rand: Random): SelectSpaceResponse {
+    let index = 0;
+    if (algo === 'random') {
+      index = rand.nextInt(this.spaces.length);
+    }
+    return { type: 'space', spaceId: this.spaces[index].id };
   }
 }

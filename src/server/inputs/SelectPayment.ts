@@ -1,10 +1,11 @@
 import {Message} from '../../common/logs/Message';
 import {BasePlayerInput} from '../PlayerInput';
 import {isPayment, Payment, PaymentOptions} from '../../common/inputs/Payment';
-import {InputResponse, isSelectPaymentResponse} from '../../common/inputs/InputResponse';
+import {InputResponse, isSelectPaymentResponse, SelectPaymentResponse} from '../../common/inputs/InputResponse';
 import {IPlayer} from '../IPlayer';
 import {SelectPaymentModel} from '../../common/models/PlayerInputModel';
 import {InputError} from './InputError';
+import { Random } from '@/common/utils/Random';
 
 export class SelectPayment extends BasePlayerInput<Payment> {
   constructor(
@@ -56,5 +57,14 @@ export class SelectPayment extends BasePlayerInput<Payment> {
       throw new InputError('Did not spend enough');
     }
     return this.cb(input.payment);
+  }
+
+  public getActionSpace(_p: IPlayer) {
+    return [this.title + ' payment'];
+  }
+
+  public agent(_algo: AgentAlgo, p: IPlayer, _rand: Random): SelectPaymentResponse {
+    // Used for cards like water import from europa and aquifer pumping that allow using alt resources for action
+    return { type: 'payment', payment: p.getReasonablePayment(this.amount, this.paymentOptions) };
   }
 }

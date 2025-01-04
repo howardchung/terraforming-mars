@@ -7,7 +7,8 @@ import {CardName} from '../../common/cards/CardName';
 import {SelectInitialCardsModel} from '../../common/models/PlayerInputModel';
 import {InputError} from './InputError';
 import {OptionsInput} from './OptionsPlayerInput';
-import {InputResponse, isSelectInitialCardsResponse} from '../../common/inputs/InputResponse';
+import {InputResponse, isSelectInitialCardsResponse, SelectInitialCardsResponse} from '../../common/inputs/InputResponse';
+import { Random } from '@/common/utils/Random';
 
 export class SelectInitialCards extends OptionsInput<undefined> {
   constructor(private player: IPlayer, cb: (corporation: ICorporationCard) => undefined) {
@@ -128,5 +129,21 @@ export class SelectInitialCards extends OptionsInput<undefined> {
       player.runInput(input.responses[i], this.options[i]);
     }
     return this.cb(undefined);
+  }
+
+  public getActionSpace(_player: IPlayer): string[] {
+    return [this.title as string];
+  }
+
+  public agent(algo: AgentAlgo, p: IPlayer, rand: Random): SelectInitialCardsResponse {
+    const choices = this.options.map((opt: any) => {
+      // This should be a selectcard for the corp and a selectcard for initial project cards
+      const choice = opt.agent(algo, p, rand);
+      return choice;
+    });
+    return {
+      type: "initialCards",
+      responses: choices,
+    }
   }
 }

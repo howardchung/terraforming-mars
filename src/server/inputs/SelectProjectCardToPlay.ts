@@ -4,13 +4,14 @@ import {IProjectCard, PlayableCard} from '../cards/IProjectCard';
 import {Units} from '../../common/Units';
 import {MoonExpansion} from '../moon/MoonExpansion';
 import {CardAction, IPlayer} from '../IPlayer';
-import {InputResponse, isSelectProjectCardToPlayResponse} from '../../common/inputs/InputResponse';
+import {InputResponse, isSelectProjectCardToPlayResponse, SelectProjectCardToPlayResponse} from '../../common/inputs/InputResponse';
 import {CardName} from '../../common/cards/CardName';
 import {CanPlayResponse} from '../cards/IProjectCard';
 import {YesAnd} from '../cards/requirements/CardRequirement';
 import {cardsToModel} from '../models/ModelUtils';
 import {SelectProjectCardToPlayModel} from '../../common/models/PlayerInputModel';
 import {InputError} from './InputError';
+import { Random } from '@/common/utils/Random';
 
 export type PlayCardMetadata = {
   reserveUnits: Readonly<Units>;
@@ -109,5 +110,31 @@ export class SelectProjectCardToPlay extends BasePlayerInput<IProjectCard> {
       }
     }
     this.cb(card);
+  }
+
+  public getActionSpace(p: IPlayer) {
+    return this.getActionable(p).map(c => this.title + ' ' + c.name);
+  }
+
+  public getActionable(p: IPlayer) {
+    return this.cards.filter(c => c.canPlay(p));
+  }
+
+  public agent(algo: AgentAlgo, p: IPlayer, rand: Random): SelectProjectCardToPlayResponse {
+    // Card might not be playable? Function to get first playable card
+    const playable = this.getActionable(p);
+    let choice = playable[0];
+    if (algo === 'random') {
+      choice = playable[rand.nextInt(playable.length)];
+    }
+    // need to figure out how to pay for card
+    // Possible that we can't use megacredits but can use steel/titanium/some other resource
+    // server doesn't check for overspend, so we could overpay for every card
+    // attempt to build a reasonable payment using titanium, steel, and megacredits
+    return { 
+      type: 'projectCard',
+      card: choice.name,
+      payment: p.getReasonablePayment(p.getCardCost(choice), p.paymentOptionsForCard(choice)),
+    };
   }
 }

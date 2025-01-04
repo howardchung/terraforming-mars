@@ -3,11 +3,14 @@ import {Message} from '../../common/logs/Message';
 import {getCardFromPlayerInput} from '../PlayerInput';
 import {BasePlayerInput} from '../PlayerInput';
 import {CardName} from '../../common/cards/CardName';
-import {InputResponse, isSelectCardResponse} from '../../common/inputs/InputResponse';
+import {InputResponse, isSelectCardResponse, SelectCardResponse} from '../../common/inputs/InputResponse';
 import {SelectCardModel} from '../../common/models/PlayerInputModel';
 import {IPlayer} from '../IPlayer';
 import {cardsToModel} from '../models/ModelUtils';
 import {InputError} from './InputError';
+import { CardModel } from '@/common/models/CardModel';
+import { inplaceShuffle } from '../utils/shuffle';
+import { Random } from '@/common/utils/Random';
 
 export type Options = {
   max: number,
@@ -79,5 +82,37 @@ export class SelectCard<T extends ICard> extends BasePlayerInput<ReadonlyArray<T
       }
     }
     return this.cb(cards);
+  }
+
+  public getActionSpace(p: IPlayer) {
+    return this.getActionable(p).map(c => this.title + ' ' + c.name);
+  }
+
+  public getActionable(p: IPlayer): CardModel[] {
+    return this.toModel(p).cards.filter(c => !c.isDisabled);
+  }
+
+  public getFirst(p: IPlayer): CardName[] {
+    // convert cards to model which does some playable check logic on enabled/standard projects
+    return this.getActionable(p).slice(0, this.config.min).map(c => c.name);
+  }
+
+  public getRandom(p: IPlayer, rand: Random): CardName[] {
+    const cards = this.getActionable(p);
+    inplaceShuffle(cards, rand);
+    // select a random number of cards
+    const range = this.config.max - this.config.min;
+    const numToPick = rand.nextInt(range) + this.config.min;
+    return cards.slice(0, numToPick).map(c => c.name);
+  }
+
+  public agent(algo: AgentAlgo, p: IPlayer, rand: Random): SelectCardResponse {
+    let choice;
+    if (algo === 'random') {
+      choice = this.getRandom(p, rand);
+    } else {
+      choice = this.getFirst(p);
+    }
+    return {type: "card", cards: choice };
   }
 }

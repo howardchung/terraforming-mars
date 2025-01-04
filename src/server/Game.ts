@@ -1539,6 +1539,9 @@ export class Game implements IGame, Logger {
     const logMessage = builder.build();
     logMessage.playerId = options?.reservedFor?.id;
     this.gameLog.push(logMessage);
+    // console.log('[LOG]: ', Log.applyData(logMessage, (d) => {
+    //   return d.value.toString();
+    // }));
     this.gameAge++;
   }
 
