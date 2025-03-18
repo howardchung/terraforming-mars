@@ -1,8 +1,10 @@
 import {Message} from '../../common/logs/Message';
 import {BasePlayerInput} from '../PlayerInput';
-import {InputResponse, isSelectAmountResponse} from '../../common/inputs/InputResponse';
+import {InputResponse, isSelectAmountResponse, SelectAmountResponse} from '../../common/inputs/InputResponse';
 import {SelectAmountModel} from '../../common/models/PlayerInputModel';
 import {InputError} from './InputError';
+import { IPlayer } from '../IPlayer';
+import { Random } from '@/common/utils/Random';
 
 export class SelectAmount extends BasePlayerInput<number> {
   public selected: number = -1;
@@ -44,5 +46,21 @@ export class SelectAmount extends BasePlayerInput<number> {
     }
     this.selected = input.amount;
     return this.cb(input.amount);
+  }
+  public getActionSpace(_p: IPlayer) {
+    const output = [];
+    for (let i = this.min; i <= this.max; i++) {
+      output.push(this.title + ' ' + i);
+    }
+    return output;
+  }
+
+  public agent(algo: AgentAlgo, _p: IPlayer, rand: Random): SelectAmountResponse {
+    let amount = this.max;
+    if (algo === 'random') {
+      const range = this.max - this.min;
+      amount = rand.nextInt(range) + this.min;
+    }
+    return { type: 'amount', amount };
   }
 }
