@@ -50,7 +50,7 @@ import {Traveller} from './modular/Traveller';
 import {Electrician} from './modular/Electrician';
 import {Collector} from './modular/Collector';
 import {Politician} from './modular/Politician';
-import {Manufacturer} from './modular/Manufacturer';
+import {Blacksmith} from './modular/Blacksmith';
 import {Incorporator} from './modular/Incorporator';
 import {Rugged} from './Rugged';
 import {BoardName} from '../../common/boards/BoardName';
@@ -110,7 +110,7 @@ export const awardManifest: MAManifest<AwardName, IAward> = {
     'Traveller': {Factory: Traveller},
     'Collector': {Factory: Collector},
     'Electrician': {Factory: Electrician},
-    'Manufacturer': {Factory: Manufacturer},
+    'Blacksmith': {Factory: Blacksmith},
     'Politician': {Factory: Politician, compatibility: 'turmoil'},
     'Rugged': {Factory: Rugged, compatibility: 'ares'},
   },
@@ -122,9 +122,9 @@ export const awardManifest: MAManifest<AwardName, IAward> = {
     [BoardName.ARABIA_TERRA]: ['Cosmic Settler', 'Botanist', 'Promoter', 'Zoologist', 'A. Manufacturer'],
     [BoardName.TERRA_CIMMERIA]: ['Biologist', 'Incorporator', 'T. Politician', 'Urbanist', 'Warmonger'],
     [BoardName.VASTITAS_BOREALIS]: ['Forecaster', 'Edgedancer', 'Visionary', 'Naturalist', 'Voyager'],
-    [BoardName.UTOPIA_PLANITIA]: [/* 'Suburbian', 'Investor', 'Botanist', 'Incorporator', 'Metropolist' */],
-    [BoardName.VASTITAS_BOREALIS_NOVUS]: ['Traveller', 'Landscaper', 'Highlander', 'Promoter', 'Manufacturer'],
-    [BoardName.TERRA_CIMMERIA_NOVUS]: [],
+    [BoardName.UTOPIA_PLANITIA]: [/*'Suburbian', 'Investor', 'Botanist', 'Incorporator', 'Metropolist'*/],
+    [BoardName.VASTITAS_BOREALIS_NOVUS]: ['Traveller', 'Landscaper', 'Highlander', 'Promoter', 'Blacksmith'],
+    [BoardName.TERRA_CIMMERIA_NOVUS]: ['Electrician', 'Founder', 'Mogul', 'Zoologist', 'Forecaster'],
   },
   expansions: {
     venus: ['Venuphile'],
@@ -142,7 +142,7 @@ export const awardManifest: MAManifest<AwardName, IAward> = {
     'Investor',
     // 'Incorporator',
     'Landscaper',
-    'Manufacturer',
+    'Blacksmith',
     'Metropolist',
     'Mogul',
     'Politician',
