@@ -65,19 +65,15 @@ export class ApiCreateGame extends Handler {
       return allBoards.filter((name) => {
         return name === BoardName.THARSIS ||
           name === BoardName.HELLAS ||
-          name === BoardName.ELYSIUM;
-          // name === BoardName.VASTITAS_BOREALIS_NOVUS;
+          // VASTITAS_BOREALIS_NOVUS: Blacksmith award should replace Miner (needs award image)
+          // name === BoardName.VASTITAS_BOREALIS_NOVUS ||
+          // TERRA_CIMMERIA_NOVUS: Planetologist MS should be replaced if not playing venus
           // name === BoardName.TERRA_CIMMERIA_NOVUS ||
+          // UTOPIA_PLANITIA: Pioneer MS should be replaced if not playing colonies
           // name === BoardName.UTOPIA_PLANITIA ||
+          // AMAZONIS is oversized and needs various changes
           // name === BoardName.AMAZONIS ||
-          // Terra Cimmeria -- architect and coastguard awards need to be implemented
-          // Planetologist MS needs to be replaced if not playing venus
-          // Vastitas Borealis needs center temp increase changed to -4
-          // Blacksmith award instead of manufacturer needs to be implemented, award image needs to be updated
-          // Spacefarer milestone should be 4 tags (image needs to be updated as well)
-          // Utopia Planitia needs Pioneer MS replaced if not playing colonies
-          // Suburban award needs to be implemented
-          // Amazonis Planitia is oversized and needs various changes
+          name === BoardName.ELYSIUM;
       });
     }
     return [board];
