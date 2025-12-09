@@ -62,7 +62,7 @@ export const awardNames = [
   'Traveller',
   'Landscaper',
   'Highlander',
-  'Blacksmith',
+  'Manufacturer',
 
   // Underworld
   'Kingpin',

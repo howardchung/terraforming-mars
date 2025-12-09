@@ -50,7 +50,7 @@ import {Traveller} from './modular/Traveller';
 import {Electrician} from './modular/Electrician';
 import {Collector} from './modular/Collector';
 import {Politician} from './modular/Politician';
-import {Blacksmith} from './modular/Blacksmith';
+import {Manufacturer} from './modular/Manufacturer';
 import {Incorporator} from './modular/Incorporator';
 import {Rugged} from './Rugged';
 import {BoardName} from '../../common/boards/BoardName';
@@ -111,7 +111,7 @@ export const awardManifest: MAManifest<AwardName, IAward> = {
     'Traveller': {Factory: Traveller},
     'Collector': {Factory: Collector},
     'Electrician': {Factory: Electrician},
-    'Blacksmith': {Factory: Blacksmith},
+    'Manufacturer': {Factory: Manufacturer},
     'Politician': {Factory: Politician, compatibility: 'turmoil'},
     'Suburbian': {Factory: Suburbian},
     'Rugged': {Factory: Rugged, compatibility: 'ares'},
@@ -145,7 +145,7 @@ export const awardManifest: MAManifest<AwardName, IAward> = {
     'Investor',
     // 'Incorporator',
     'Landscaper',
-    'Blacksmith',
+    'Manufacturer',
     'Metropolist',
     'Mogul',
     'Politician',
