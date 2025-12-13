@@ -65,13 +65,12 @@ export class ApiCreateGame extends Handler {
       return allBoards.filter((name) => {
         return name === BoardName.THARSIS ||
           name === BoardName.HELLAS ||
-          // VASTITAS_BOREALIS_NOVUS: Blacksmith award should replace Miner (needs award image)
-          // name === BoardName.VASTITAS_BOREALIS_NOVUS ||
+          name === BoardName.VASTITAS_BOREALIS_NOVUS ||
+          name === BoardName.TERRA_CIMMERIA_NOVUS ||
+          name === BoardName.UTOPIA_PLANITIA ||
           // TERRA_CIMMERIA_NOVUS: Planetologist MS should be replaced if not playing venus
-          // name === BoardName.TERRA_CIMMERIA_NOVUS ||
           // UTOPIA_PLANITIA: Pioneer MS should be replaced if not playing colonies
-          // name === BoardName.UTOPIA_PLANITIA ||
-          // AMAZONIS is oversized and needs various changes
+          // AMAZONIS: oversized and needs various changes
           // name === BoardName.AMAZONIS ||
           name === BoardName.ELYSIUM;
       });
