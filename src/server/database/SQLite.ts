@@ -7,6 +7,12 @@ import {IGame, Score} from '../IGame';
 import {GameOptions} from '../game/GameOptions';
 import {GameId, ParticipantId} from '../../common/Types';
 import {SerializedGame} from '../SerializedGame';
+<<<<<<< HEAD
+import type * as sqlite3 from 'sqlite3';
+import {Database} from 'sqlite3';
+
+=======
+>>>>>>> 41d53264345a7e86b7cf854f20cdcedf3039e786
 import {daysAgoToSeconds} from './utils';
 import {MultiMap} from 'mnemonist';
 import {Session, SessionId} from '../auth/Session';
@@ -256,6 +262,8 @@ export class SQLite implements IDatabase {
     return result;
   }
 
+<<<<<<< HEAD
+=======
   public async createSession(session: Session): Promise<void> {
     await this.asyncRun('INSERT INTO session (session_id, data, expiration_time) VALUES($1, $2, $3)', [session.id, JSON.stringify(session.data), session.expirationTimeMillis / 1000]);
   }
@@ -275,6 +283,7 @@ export class SQLite implements IDatabase {
     });
   }
 
+>>>>>>> 41d53264345a7e86b7cf854f20cdcedf3039e786
   public async getCompletedGames(): Promise<Array<any>> {
     return this.asyncAll('SELECT * FROM completed_game');
   }

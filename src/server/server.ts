@@ -101,6 +101,9 @@ async function start() {
 
   console.log(`Starting ${raw_settings.head}, built at ${raw_settings.builtAt}`);
 
+<<<<<<< HEAD
+  server.listen(port);
+=======
   const port = process.env.PORT || 8080;
   const host = process.env.HOST;
   if (host) {
@@ -110,6 +113,7 @@ async function start() {
   }
 
   server.listen({port: port, host: host});
+>>>>>>> 41d53264345a7e86b7cf854f20cdcedf3039e786
   if (!process.env.SERVER_ID) {
     console.log(`The secret serverId for this server is ${ansi.style.bold}${serverId}${ansi.style.reset}.`);
     console.log(`Administrative routes can be found at admin?serverId=${serverId}`);
