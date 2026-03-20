@@ -43,11 +43,11 @@ export const MODULE_NAMES = {
 
 export const DEFAULT_EXPANSIONS = {
   corpera: true,
-  promo: false,
+  promo: true,
   venus: false,
   colonies: false,
-  prelude: false,
-  prelude2: false,
+  prelude: true,
+  prelude2: true,
   turmoil: false,
   community: false,
   ares: false,
