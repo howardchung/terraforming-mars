@@ -66,10 +66,10 @@ export class ApiCreateGame extends Handler {
       return allBoards.filter((name) => {
         return name === BoardName.THARSIS ||
           name === BoardName.HELLAS ||
-          name === BoardName.VASTITAS_BOREALIS_NOVUS ||
-          name === BoardName.TERRA_CIMMERIA_NOVUS ||
+          name === BoardName.VASTITAS_BOREALIS_NOVA ||
+          name === BoardName.TERRA_CIMMERIA_NOVA ||
           name === BoardName.UTOPIA_PLANITIA ||
-          // TERRA_CIMMERIA_NOVUS: Planetologist MS should be replaced if not playing venus
+          // TERRA_CIMMERIA_NOVA: Planetologist MS should be replaced if not playing venus
           // UTOPIA_PLANITIA: Pioneer MS should be replaced if not playing colonies
           // AMAZONIS: oversized and needs various changes
           // name === BoardName.AMAZONIS ||
