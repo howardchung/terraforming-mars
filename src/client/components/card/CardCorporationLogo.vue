@@ -646,7 +646,7 @@
 
 <script lang="ts">
 
-import Vue from 'vue';
+import {defineComponent} from 'vue';
 import {CardName} from '@/common/cards/CardName';
 
 
@@ -752,7 +752,7 @@ const logos: Partial<Record<CardName, 'image' | 'css' | 'bespoke'>> = {
   [CardName.VOLTAGON]: 'bespoke',
 };
 
-export default Vue.extend({
+export default defineComponent({
   name: 'CardCorporationLogo',
   props: {
     title: {

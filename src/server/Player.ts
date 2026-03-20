@@ -5,7 +5,7 @@ import {cardsFromJSON, ceosFromJSON, corporationCardsFromJSON, newCorporationCar
 import {CardName} from '../common/cards/CardName';
 import {CardType} from '../common/cards/CardType';
 import {Color} from '../common/Color';
-import {ICorporationCard, isICorporationCard} from './cards/corporation/ICorporationCard';
+import {ICorporationCard} from './cards/corporation/ICorporationCard';
 import {IGame} from './IGame';
 import {Game} from './Game';
 import {Payment, PaymentOptions, DEFAULT_PAYMENT_VALUES} from '../common/inputs/Payment';
@@ -506,7 +506,7 @@ export class Player implements IPlayer {
 
       if (removingPlayer !== undefined && removingPlayer !== this) this.resolveInsurance();
 
-      if (options?.log ?? true === true) {
+      if (options?.log ?? true) {
         this.game.log('${0} removed ${1} resource(s) from ${2}\'s ${3}', (b) =>
           b.player(options?.removingPlayer ?? this)
             .number(amountRemoved)
@@ -829,6 +829,13 @@ export class Player implements IPlayer {
       this.pay(payment);
     }
 
+    const selfReplicatingRobots = this.tableau.get(CardName.SELF_REPLICATING_ROBOTS);
+    if (selfReplicatingRobots instanceof SelfReplicatingRobots) {
+      if (inplaceRemove(selfReplicatingRobots.targetCards, selectedCard)) {
+        selectedCard.resourceCount = 0;
+      }
+    }
+
     ColoniesHandler.maybeActivateColonies(this.game, selectedCard);
 
     if (selectedCard.type !== CardType.PROXY) {
@@ -862,13 +869,6 @@ export class Player implements IPlayer {
         this.cardsInHand.splice(projectCardIndex, 1);
       } else if (preludeCardIndex !== -1) {
         this.preludeCardsInHand.splice(preludeCardIndex, 1);
-      }
-
-      const selfReplicatingRobots = this.tableau.get(CardName.SELF_REPLICATING_ROBOTS);
-      if (selfReplicatingRobots instanceof SelfReplicatingRobots) {
-        if (inplaceRemove(selfReplicatingRobots.targetCards, selectedCard)) {
-          selectedCard.resourceCount = 0;
-        }
       }
     }
 
@@ -907,11 +907,7 @@ export class Player implements IPlayer {
 
     /* A player responding to their own cards played. */
     for (const effectCard of this.playedCards) {
-      if (isICorporationCard(effectCard)) {
-        this.defer(effectCard.onCardPlayedForCorps?.(this, card));
-      } else {
-        this.defer(effectCard.onCardPlayed?.(this, card));
-      }
+      this.defer(effectCard.onCardPlayed?.(this, card));
     }
 
     TurmoilHandler.applyOnCardPlayedEffect(this, card);
@@ -1067,7 +1063,8 @@ export class Player implements IPlayer {
       vanAllen.stock.add(Resource.MEGACREDITS, 3, {log: true, from: {player: this}});
     }
     if (!this.playedCards.has(CardName.VANALLEN)) { // Why isn't this an else clause to the statement above?
-      const cost = this.milestoneCost();
+      const baseCost = this.milestoneCost();
+      const cost = baseCost + ((milestone.name === 'Briber') ? 12 : 0);
       this.game.defer(new SelectPaymentDeferred(this, cost, {title: 'Select how to pay for milestone'}));
     }
     this.game.log('${0} claimed ${1} milestone', (b) => b.player(this).milestone(milestone));
@@ -1082,7 +1079,7 @@ export class Player implements IPlayer {
     return stagedProtests?.generationUsed === this.game.generation;
   }
 
-  private milestoneCost() {
+  public milestoneCost() {
     if (this.playedCards.has(CardName.NIRGAL_ENTERPRISES)) {
       return 0;
     }
@@ -1497,20 +1494,20 @@ export class Player implements IPlayer {
         orOptions.options.push(this.passOption());
       }
 
-      this.setWaitingFor(orOptions, () => {
+      this.setWaitingFor(orOptions, this.runWhenEmpty(() => {
         if (this.pendingInitialActions.length === 0) {
           this.incrementActionsTaken();
         }
         this.timer.rebate(constants.BONUS_SECONDS_PER_ACTION * 1000);
         this.takeAction();
-      });
+      }));
       return;
     }
 
-    this.setWaitingFor(this.getActions(), () => {
+    this.setWaitingFor(this.getActions(), this.runWhenEmpty(() => {
       this.incrementActionsTaken();
       this.takeAction();
-    });
+    }));
   }
 
   private incrementActionsTaken(): void {
@@ -1868,16 +1865,8 @@ export class Player implements IPlayer {
     player.preservationProgram = d.preservationProgram ?? false;
 
     player.timer = Timer.deserialize(d.timer);
+    player.underworldData = d.underworldData;
 
-    if (d.underworldData !== undefined) {
-      const dunerworldData = d.underworldData;
-      // TODO(kberg): Remove the wrapper by 2025-10-01
-      player.underworldData = {
-        tokens: (dunerworldData.tokens ?? []).map((e) => typeof(e) === 'object' ? e : {token: e, shelter: false, active: false}),
-        corruption: dunerworldData.corruption,
-        activeBonus: dunerworldData.temperatureBonus ?? dunerworldData.activeBonus,
-      };
-    }
     if (d.alliedParty !== undefined) {
       player._alliedParty = d.alliedParty;
     }

@@ -27,7 +27,7 @@
 <script lang="ts">
 /* global RequestInit */
 
-import Vue from 'vue';
+import {defineComponent} from 'vue';
 import * as constants from '@/common/constants';
 import * as raw_settings from '@/genfiles/settings.json';
 import {vueRoot} from '@/client/components/vueRoot';
@@ -57,20 +57,24 @@ type DataModel = {
 
 const CANNOT_CONTACT_SERVER = 'Unable to reach the server. It may be restarting or down for maintenance.';
 
-export default Vue.extend({
+export default defineComponent({
   name: 'waiting-for',
   props: {
     playerView: {
       type: Object as () => PlayerViewModel,
+      required: true,
     },
     players: {
       type: Array as () => Array<PublicPlayerModel>,
+      required: true,
     },
     settings: {
       type: Object as () => typeof raw_settings,
+      required: true,
     },
     waitingfor: {
       type: Object as () => PlayerInputModel | undefined,
+      default: undefined,
     },
   },
   data(): DataModel {
@@ -94,7 +98,9 @@ export default Vue.extend({
       if (position !== -1 && position < sequence.length - 1) {
         next = sequence[position + 1];
       }
-      document.title = next + ' ' + this.$t(constants.APP_NAME);
+      const playerCount = this.playerView.players.length;
+      const gameType = playerCount === 1 ? 'Solo Game' : `${playerCount} Player Game`;
+      document.title = next + ' ' + `${gameType} | ${this.$t(constants.APP_NAME)}`;
     },
     onsave(out: InputResponse) {
       this.fetchPlayerInput(
@@ -154,7 +160,7 @@ export default Vue.extend({
         root.playerkey++;
         root.screen = 'player-home';
         if (this.playerView.game.phase === 'end' && window.location.pathname !== paths.THE_END) {
-          window.location = window.location as any as (string & Location); // eslint-disable-line no-self-assign
+          window.location = window.location as any as (string & Location);
         }
         this.savedPlayerView = undefined;
       } else {
@@ -166,36 +172,38 @@ export default Vue.extend({
       const root = vueRoot(this);
       clearTimeout(ui_update_timeout_id);
       const askForUpdate = () => {
-        const url = paths.API_WAITING_FOR + window.location.search + '&gameAge=' + this.playerView.game.gameAge + '&undoCount=' + this.playerView.game.undoCount;
-        fetch(url, {method: 'GET'})
-          .then(async (response) => {
-            if (response.ok) {
-              const result = await response.json() as WaitingForModel;
-              this.playersWaitingFor = result.waitingFor;
-              if (result.result === 'GO') {
-                // Will only apply to player, not spectator.
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', paths.API_WAITING_FOR + window.location.search + '&gameAge=' + this.playerView.game.gameAge + '&undoCount=' + this.playerView.game.undoCount);
+        xhr.onerror = function() {
+          root.showAlert('Error fetching state', CANNOT_CONTACT_SERVER, () => vueApp.waitForUpdate());
+        };
+        xhr.onload = () => {
+          if (xhr.status === statusCode.ok) {
+            const result = xhr.response as WaitingForModel;
+            this.playersWaitingFor = result.waitingFor;
+            if (result.result === 'GO') {
+              // Will only apply to player, not spectator.
+              root.updatePlayer();
+              this.notify();
+              // We don't need to wait anymore - it's our turn
+              return;
+            } else if (result.result === 'REFRESH') {
+              // Something changed, let's refresh UI
+              if (isPlayerId(this.playerView.id)) {
                 root.updatePlayer();
-                this.notify();
-                // We don't need to wait anymore - it's our turn
-                return;
-              } else if (result.result === 'REFRESH') {
-                // Something changed, let's refresh UI
-                if (isPlayerId(this.playerView.id)) {
-                  root.updatePlayer();
-                } else {
-                  root.updateSpectator();
-                }
-
-                return;
+              } else {
+                root.updateSpectator();
               }
-              vueApp.waitForUpdate();
-            } else {
-              root.showAlert('Error with input', `Received unexpected response from server (${response.status}). This is often due to the server restarting.`, () => vueApp.waitForUpdate());
+
+              return;
             }
-          })
-          .catch(() => {
-            root.showAlert('Error fetching state', CANNOT_CONTACT_SERVER, () => vueApp.waitForUpdate());
-          });
+            vueApp.waitForUpdate();
+          } else {
+            root.showAlert('Error with input', `Received unexpected response from server (${xhr.status}). This is often due to the server restarting.`, () => vueApp.waitForUpdate());
+          }
+        };
+        xhr.responseType = 'json';
+        xhr.send();
       };
       ui_update_timeout_id = window.setTimeout(askForUpdate, this.waitingForTimeout);
     },
@@ -239,7 +247,9 @@ export default Vue.extend({
     },
   },
   mounted() {
-    document.title = this.$t(constants.APP_NAME);
+    const playerCount = this.playerView.players.length;
+    const gameType = playerCount === 1 ? 'Solo Game' : `${playerCount} Player Game`;
+    document.title = `${gameType} | ${this.$t(constants.APP_NAME)}`;
     window.clearInterval(documentTitleTimer);
     if (this.waitingfor === undefined) {
       this.waitForUpdate();
