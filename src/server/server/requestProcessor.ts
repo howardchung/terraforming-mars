@@ -9,10 +9,15 @@ import {ApiCloneableGame} from '../routes/ApiCloneableGame';
 import {ApiCreateGame} from '../routes/ApiCreateGame';
 import {ApiGame} from '../routes/ApiGame';
 import {ApiGameHistory} from '../routes/ApiGameHistory';
+<<<<<<< HEAD
+import {ApiPlayer} from '../routes/ApiPlayer';
+import {ApiStats} from '../routes/ApiStats';
+=======
 import {ApiGameLogs} from '../routes/ApiGameLogs';
 import {ApiGames} from '../routes/ApiGames';
 import {ApiIPs} from '../routes/ApiIPs';
 import {ApiLogout} from '../routes/ApiLogout';
+>>>>>>> 41d53264345a7e86b7cf854f20cdcedf3039e786
 import {ApiStatsPage} from '../routes/ApiStatsPage';
 import {ApiMetrics} from '../routes/ApiMetrics';
 import {ApiPlayer} from '../routes/ApiPlayer';
