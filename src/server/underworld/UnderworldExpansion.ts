@@ -161,7 +161,7 @@ export class UnderworldExpansion {
 
     for (const p of game.playersInGenerationOrder) {
       for (const card of p.tableau) {
-        card.onIdentificationByAnyPlayer?.(p, player, space);
+        card.onIdentificationByAnyPlayer?.(p, player, undergroundResource);
       }
     }
     return true;
@@ -653,6 +653,11 @@ export class UnderworldExpansion {
     if (token.active) {
       // TODO(kberg): Log the discard.
       player.underworldData.activeBonus = undefined;
+    }
+    if (token.token === 'sciencetag') {
+      player.tags.extraScienceTags = Math.max(player.tags.extraScienceTags - 1, 0);
+    } else if (token.token === 'planttag') {
+      player.tags.extraPlantTags = Math.max(player.tags.extraPlantTags - 1, 0);
     }
   }
 }
