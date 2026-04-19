@@ -158,12 +158,7 @@ export class UnderworldExpansion {
 
     const undergroundResource = this.drawExcavationToken(game);
     space.undergroundResources = undergroundResource;
-
-    for (const p of game.playersInGenerationOrder) {
-      for (const card of p.tableau) {
-        card.onIdentificationByAnyPlayer?.(p, player, undergroundResource);
-      }
-    }
+    game.triggerForAllCards((p, c) => c.onIdentificationByAnyPlayer?.(p, player, undergroundResource));
     return true;
   }
 
@@ -434,15 +429,11 @@ export class UnderworldExpansion {
       break;
     case 'sciencetag':
       player.tags.extraScienceTags++;
-      for (const card of player.tableau) {
-        card.onNonCardTagAdded?.(player, Tag.SCIENCE);
-      }
+      player.triggerOnNonCardTagAdded(Tag.SCIENCE);
       break;
     case 'planttag':
       player.tags.extraPlantTags++;
-      for (const card of player.tableau) {
-        card.onNonCardTagAdded?.(player, Tag.PLANT);
-      }
+      player.triggerOnNonCardTagAdded(Tag.PLANT);
       break;
 
     // This doesn't reward anything.

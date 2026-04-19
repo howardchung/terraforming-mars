@@ -154,6 +154,8 @@ export class Player implements IPlayer {
   public plantsNeededForGreenery: number = 8;
   // Lawsuit
   public removingPlayers: Array<PlayerId> = [];
+  // Warmonger
+  public warmongerCards: number = 0;
   // For Playwrights corp.
   // removedFromPlayCards is a bit of a misname: it's a temporary storage for
   // cards that provide 'next card' discounts. This will clear between turns.
@@ -313,10 +315,6 @@ export class Player implements IPlayer {
     if (this.steelValue > 0) {
       this.steelValue--;
     }
-  }
-
-  public getTerraformRating(): number {
-    return this.terraformRating;
   }
 
   public increaseTerraformRating(steps: number = 1, opts: {log?: boolean, from?: From} = {}) {
@@ -898,6 +896,12 @@ export class Player implements IPlayer {
     }
 
     return undefined;
+  }
+
+  public triggerOnNonCardTagAdded(tag: Tag): void {
+    for (const card of this.tableau) {
+      card.onNonCardTagAdded?.(this, tag);
+    }
   }
 
   public onCardPlayed(card: ICard) {
@@ -1781,6 +1785,7 @@ export class Player implements IPlayer {
       plantsNeededForGreenery: this.plantsNeededForGreenery,
       // Lawsuit
       removingPlayers: this.removingPlayers,
+      warmongerCards: this.warmongerCards,
       // Playwrights
       removedFromPlayCards: this.removedFromPlayCards.map(toName),
       // Standard Technology: Underworld
@@ -1845,6 +1850,7 @@ export class Player implements IPlayer {
       titanium: d.titaniumProduction,
     }));
     player.removingPlayers = d.removingPlayers;
+    player.warmongerCards = d.warmongerCards ?? 0;
     player.tags.extraScienceTags = d.scienceTagCount;
     player.tags.extraPlantTags = d.plantTagCount;
     player.steel = d.steel;
