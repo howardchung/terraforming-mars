@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import '@/server/init';
 require('console-stamp')(
   console,
   {format: ':date(yyyy-mm-dd HH:MM:ss Z)'},

@@ -200,6 +200,7 @@
             <div v-if="game.gameOptions.expansions.pathfinders">
               <PlanetaryTracks :tracks="game.pathfinders" :gameOptions="game.gameOptions"/>
             </div>
+            <DeltaProjectBoard v-if="game.gameOptions.expansions.deltaProject" :players="players"></DeltaProjectBoard>
           </div>
           <div class="game_end_block--log game-end-column">
             <log-panel :color="color" :viewModel="viewModel"></log-panel>
@@ -214,12 +215,14 @@
 
 import {defineComponent} from 'vue';
 import * as constants from '@/common/constants';
+import {setDocumentTitle} from '@/client/utils/documentTitle';
 import {paths} from '@/common/app/paths';
 import {GameModel} from '@/common/models/GameModel';
 import {PlayerViewModel, PublicPlayerModel, ViewModel} from '@/common/models/PlayerModel';
 import Board from '@/client/components/Board.vue';
 import MoonBoard from '@/client/components/moon/MoonBoard.vue';
 import PlanetaryTracks from '@/client/components/pathfinders/PlanetaryTracks.vue';
+import DeltaProjectBoard from '@/client/components/delta/DeltaProjectBoard.vue';
 import LogPanel from '@/client/components/logpanel/LogPanel.vue';
 import AppButton from '@/client/components/common/AppButton.vue';
 import VictoryPointChart, {DataSet} from '@/client/components/gameend/VictoryPointChart.vue';
@@ -388,10 +391,11 @@ export default defineComponent({
     AppButton,
     MoonBoard,
     PlanetaryTracks,
+    DeltaProjectBoard,
     VictoryPointChart,
   },
   mounted() {
-    document.title = `End of Game | ${constants.APP_NAME}`;
+    setDocumentTitle('🏁 | ' + this.game.name);
   },
   methods: {
     getEndGamePlayerRowColorClass(color: Color): string {
