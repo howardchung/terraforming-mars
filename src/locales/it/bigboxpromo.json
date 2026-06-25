@@ -31,7 +31,7 @@
 
   "Splice":"",
   "You start with 44 M€. As your first action, reveal cards until you have revealed a microbe tag. Take it and discard the rest.":"Inizi con 44 M€. Come prima azione, rivela carte progetto fino a che non trovi un simbolo Microbo. Aggiungi quella carta alla tua mano e scarta le altre.",
-  "Effect: when a microbe tag is played, incl. this, THAT PLAYER gains 2 M€, or adds a microbe to THAT card, and you gain 2 M€.":"Effetto: ogni volta che viene messo in gioco da qualcuno un simbolo Microbo, incluso questo, QUEL GIOCATORE ottiene 2 M€ oppure aggiunge 1 Microbo su QUELLA carta, e tu ottieni 2 M€.",
+  "Effect: When a microbe tag is played, incl. this, THAT PLAYER gains 2 M€, or adds a microbe to THAT card, and you gain 2 M€.":"Effetto: ogni volta che viene messo in gioco da qualcuno un simbolo Microbo, incluso questo, QUEL GIOCATORE ottiene 2 M€ oppure aggiunge 1 Microbo su QUELLA carta, e tu ottieni 2 M€.",
 
   "Asteroid Hollowing":"Scavo Asteroidale",
   "Action: Spend 1 titanium to add 1 asteroid resource here and increase M€ production 1 step.":"Azione: spendi 1 Titanio per aggiungere 1 risorsa Asteroide a questa carta e incrementare la produzione di M€ di 1 livello.",
@@ -86,8 +86,7 @@
   "Decrease your energy production 1 step. 1 VP per asteroid on this card.":"Abbassa la tua Produzione di Energia di 1 livello. 1 PV per ogni Asteroide su questa carta.",
 
   "Asteroid Rights":"Diritti sugli Asteroidi",
-  "(Action: Spend 1 M€ to add 1 asteroid to ANY card.)": "(Azione: spendi 1 M€ per aggiungere 1 Asteroide ad una carta QUALSIASI.)",
-  "(Action: Spend 1 asteroid here to increase M€ production 1 step OR gain 2 titanium.)": "(Azione: spendi 1 Asteroide da qui per aumentare la Produzione di M€ di 1 livello OPPURE ottenere 2 Titanio.)",
+  "(Action: Spend 1 M€ to add 1 asteroid to ANY card OR spend 1 asteroid here to increase M€ production 1 step OR gain 2 titanium.)": "(Azione: spendi 1 M€ per aggiungere 1 Asteroide ad una carta QUALSIASI OPPURE spendi 1 Asteroide da qui per aumentare la Produzione di M€ di 1 livello OPPURE ottenere 2 Titanio.)",
   "Add 2 asteroids to this card.": "Aggiungi 2 Asteroidi a questa carta.",
 
   "(Action: Spend 2X M€ to gain X energy.)":"(Azione: spendi 2X M€ per ottenere X risorse Energia.)",

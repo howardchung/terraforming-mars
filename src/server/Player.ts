@@ -1081,7 +1081,7 @@ export class Player implements IPlayer {
       // VanAllen CEO Hook for Milestones
       const vanAllen = this.game.getCardPlayerOrUndefined(CardName.VANALLEN);
       if (vanAllen !== undefined) {
-        vanAllen.stock.add(Resource.MEGACREDITS, 3, {log: true, from: {player: this}});
+        vanAllen.stock.add(Resource.MEGACREDITS, 3, {log: true, from: {card: CardName.VANALLEN}});
       }
     };
 
@@ -1692,7 +1692,9 @@ export class Player implements IPlayer {
     this.waitingFor = undefined;
     this.waitingForCb = undefined;
     try {
-      this.timer.stop();
+      if (!waitingFor.optional) {
+        this.timer.stop();
+      }
       this.defer(waitingFor.process(input, this));
       waitingForCb();
     } catch (err) {
@@ -1714,7 +1716,9 @@ export class Player implements IPlayer {
         console.warn(message);
       }
     }
-    this.timer.start();
+    if (!input.optional) {
+      this.timer.start();
+    }
     this.waitingFor = input;
     this.waitingForCb = cb;
     this.game.inputsThisRound++;
@@ -1741,6 +1745,15 @@ export class Player implements IPlayer {
           this.setWaitingForSafely(input, cb);
         };
       }
+    }
+  }
+
+  public clearWaitingFor(): void {
+    const waitingFor = this.waitingFor;
+    this.waitingFor = undefined;
+    this.waitingForCb = undefined;
+    if (waitingFor !== undefined && !waitingFor.optional) {
+      this.timer.stop();
     }
   }
 
