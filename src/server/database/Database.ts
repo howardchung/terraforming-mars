@@ -2,7 +2,6 @@ import {PostgreSQL} from './PostgreSQL';
 import {SQLite} from './SQLite';
 import {IDatabase} from './IDatabase';
 import {LocalFilesystem} from './LocalFilesystem';
-import {MetricsDelegate} from './MetricsDelegate';
 
 export class Database {
   private static instance: IDatabase;
