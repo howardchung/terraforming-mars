@@ -1,3 +1,4 @@
+import prometheus from 'prom-client';
 import pg from 'pg';
 import {IDatabase} from './IDatabase';
 import {IGame, Score} from '../IGame';
@@ -8,6 +9,11 @@ import {daysAgoToSeconds, stringToNumber} from './utils';
 import {GameIdLedger} from './IDatabase';
 import {Session, SessionId} from '../auth/Session';
 import {toID} from '../../common/utils/utils';
+import {databaseMetrics, withDatabaseMetrics} from './MetricsDelegate';
+import {ThrottledCache} from './ThrottledCache';
+import {Clock} from '@/common/Timer';
+import {parseInterned} from './parseInterned';
+import {LogMessage} from '@/common/logs/LogMessage';
 
 type StoredSerializedGame = Omit<SerializedGame, 'gameOptions' | 'gameLog'> & {logLength: number};
 
@@ -15,8 +21,42 @@ export const POSTGRESQL_TABLES = ['game', 'games', 'game_results', 'participants
 
 const POSTGRES_TRIM_COUNT = stringToNumber(process.env.POSTGRES_TRIM_COUNT, 10);
 
+// How often the (expensive) table/database size stats are actually recomputed. Scrapes that land
+// between refreshes just get the cached values.
+const SIZE_STATS_COLLECTION_INTERVAL_MS = 5 * 60_000;
+
+let activeDatabase: PostgreSQL | undefined;
+
+const metrics = {
+  tableSizeBytes: new prometheus.Gauge({
+    name: 'postgresql_table_size_bytes',
+    help: 'Total size (table + indexes) of a PostgreSQL table, in bytes',
+    labelNames: ['table'],
+    registers: [prometheus.register],
+    collect() {
+      activeDatabase?.metricsScrapeCache.get();
+    },
+  }),
+  databaseSizeBytes: new prometheus.Gauge({
+    name: 'postgresql_database_size_bytes',
+    help: 'Size of the PostgreSQL database, in bytes',
+    registers: [prometheus.register],
+    collect() {
+      activeDatabase?.metricsScrapeCache.get();
+    },
+  }),
+  tableRows: new prometheus.Gauge({
+    name: 'postgresql_table_rows',
+    help: 'Row count of a PostgreSQL table (select count(*))',
+    labelNames: ['table'],
+    registers: [prometheus.register],
+    collect() {
+      activeDatabase?.metricsScrapeCache.get();
+    },
+  }),
+};
+
 export class PostgreSQL implements IDatabase {
-  private databaseName: string | undefined = undefined; // Use this only for stats.
   protected trimCount = POSTGRES_TRIM_COUNT;
 
   protected statistics = {
@@ -25,6 +65,8 @@ export class PostgreSQL implements IDatabase {
     saveConflictUndoCount: 0,
     saveConflictNormalCount: 0,
   };
+  public metricsScrapeCache: ThrottledCache<void>;
+
   private _client: pg.Pool | undefined;
 
   protected get client(): pg.Pool {
@@ -44,17 +86,12 @@ export class PostgreSQL implements IDatabase {
         rejectUnauthorized: false,
       };
     }
+    this.metricsScrapeCache = new ThrottledCache(
+      new Clock(),
+      SIZE_STATS_COLLECTION_INTERVAL_MS,
+      () => this.collectSizeStats());
 
-    if (config.database) {
-      this.databaseName = config.database;
-    } else if (config.connectionString) {
-      try {
-        // Remove leading / from pathname.
-        this.databaseName = new URL(config.connectionString).pathname.replace(/^\//, '');
-      } catch (e) {
-        console.log(e);
-      }
-    }
+    activeDatabase = this;
   }
 
   public async initialize(): Promise<void> {
@@ -139,18 +176,15 @@ export class PostgreSQL implements IDatabase {
   }
 
   private compose(game: string, log: string, options: string): SerializedGame {
-    const stored: StoredSerializedGame = JSON.parse(game);
+    const stored: StoredSerializedGame = parseInterned(game);
     const {logLength, ...remainder} = stored;
-    // console.log(log, options, stored.logLength);
-    // TODO(kberg): Remove the outer join, and the else of this conditional by 2025-01-01
-    if (stored.logLength !== undefined) {
-      const gameLog = JSON.parse(log);
-      gameLog.length = logLength;
-      const gameOptions = JSON.parse(options);
-      return {...remainder, gameOptions, gameLog};
-    } else {
-      return remainder as SerializedGame;
-    }
+
+    const gameLog: Array<LogMessage> = parseInterned(log);
+    // If this is part of an undo operation, delete the end
+    // of the array so the log matches the length.
+    gameLog.length = logLength;
+    const gameOptions: GameOptions = parseInterned(options);
+    return {...remainder, gameOptions, gameLog};
   }
 
   public async getGameId(participantId: ParticipantId): Promise<GameId> {
@@ -183,7 +217,7 @@ export class PostgreSQL implements IDatabase {
         game.log as log,
         game.options as options
       FROM games
-      LEFT JOIN game on game.game_id = games.game_id
+      INNER JOIN game on game.game_id = games.game_id
       WHERE games.game_id = $1
       ORDER BY save_id DESC
       LIMIT 1`,
@@ -203,7 +237,7 @@ export class PostgreSQL implements IDatabase {
         game.log as log,
         game.options as options
       FROM games
-      LEFT JOIN game on game.game_id = games.game_id
+      INNER JOIN game on game.game_id = games.game_id
       WHERE games.game_id = $1
       AND games.save_id = $2`,
       [gameId, saveId],
@@ -216,18 +250,29 @@ export class PostgreSQL implements IDatabase {
     return this.compose(row.game, row.log, row.options);
   }
 
+  // Not part of IDatabase: void/callback-based, so MetricsDelegate can't observe its completion or
+  // errors the way it can for Promise-returning methods. Instrumented directly here instead.
   saveGameResults(gameId: GameId, players: number, generations: number, gameOptions: GameOptions, scores: Array<Score>): void {
+    const operation = 'saveGameResults';
+    const startMs = Date.now();
+    databaseMetrics.operationCount.inc({operation});
     this.client.query('INSERT INTO game_results (game_id, seed_game_id, players, generations, game_options, scores) VALUES($1, $2, $3, $4, $5, $6)', [gameId, gameOptions.clonedGamedId, players, generations, gameOptions, JSON.stringify(scores)], (err) => {
+      databaseMetrics.operationLatency.observe({operation}, Date.now() - startMs);
       if (err) {
+        databaseMetrics.operationErrors.inc({operation});
         console.error('PostgreSQL:saveGameResults', err);
         throw err;
       }
     });
   }
 
-  async getMaxSaveId(gameId: GameId): Promise<number> {
-    const res = await this.client.query('SELECT MAX(save_id) as save_id FROM games WHERE game_id = $1', [gameId]);
-    return res.rows[0].save_id;
+  // Not part of IDatabase: a PostgreSQL-only helper, invisible to MetricsDelegate. Instrumented
+  // directly here instead.
+  getMaxSaveId(gameId: GameId): Promise<number> {
+    return withDatabaseMetrics('getMaxSaveId', async () => {
+      const res = await this.client.query('SELECT MAX(save_id) as save_id FROM games WHERE game_id = $1', [gameId]);
+      return res.rows[0].save_id;
+    });
   }
 
   throwIf(err: any, condition: string) {
@@ -239,8 +284,9 @@ export class PostgreSQL implements IDatabase {
 
   async markFinished(gameId: GameId): Promise<void> {
     const promise1 = this.client.query('UPDATE games SET status = \'finished\' WHERE game_id = $1', [gameId]);
-    const promise2 = this.client.query('INSERT INTO completed_game(game_id) VALUES ($1)', [gameId]);
-    await Promise.all([promise1, promise2]);
+    const promise2 = this.client.query('UPDATE game SET status = \'finished\' WHERE game_id = $1', [gameId]);
+    const promise3 = this.client.query('INSERT INTO completed_game(game_id) VALUES ($1)', [gameId]);
+    await Promise.all([promise1, promise2, promise3]);
   }
 
   // Purge unfinished games older than MAX_GAME_DAYS days. If this environment variable is absent, it uses the default of 10 days.
@@ -261,6 +307,8 @@ export class PostgreSQL implements IDatabase {
       console.log(`Purged ${deleteGamesResult.rowCount} rows from games`);
       const deleteParticipantsResult = await this.client.query('DELETE FROM participants WHERE game_id = ANY($1)', [gameIds]);
       console.log(`Purged ${deleteParticipantsResult.rowCount} rows from participants`);
+      const deleteGameResult = await this.client.query('DELETE FROM game WHERE game_id = ANY($1)', [gameIds]);
+      console.log(`Purged ${deleteGameResult.rowCount} rows from game`);
     }
     return gameIds;
   }
@@ -284,10 +332,14 @@ export class PostgreSQL implements IDatabase {
     }
   }
 
-  async compressCompletedGame(gameId: GameId): Promise<void> {
-    const maxSaveId = await this.getMaxSaveId(gameId);
-    await this.client.query('DELETE FROM games WHERE game_id = $1 AND save_id < $2 AND save_id > 0', [gameId, maxSaveId]);
-    await this.client.query('DELETE FROM completed_game where game_id = $1', [gameId]);
+  // Not part of IDatabase (only the batch compressCompletedGames is), invisible to MetricsDelegate.
+  // Instrumented directly here instead, so per-game maintenance latency isn't lost inside the batch.
+  compressCompletedGame(gameId: GameId): Promise<void> {
+    return withDatabaseMetrics('compressCompletedGame', async () => {
+      const maxSaveId = await this.getMaxSaveId(gameId);
+      await this.client.query('DELETE FROM games WHERE game_id = $1 AND save_id < $2 AND save_id > 0', [gameId, maxSaveId]);
+      await this.client.query('DELETE FROM completed_game where game_id = $1', [gameId]);
+    });
   }
 
   async saveGame(game: IGame): Promise<void> {
@@ -352,11 +404,16 @@ export class PostgreSQL implements IDatabase {
     } catch (err) {
       await this.client.query('ROLLBACK');
       this.statistics.saveErrorCount++;
+      // saveGame deliberately never rejects (see below), so MetricsDelegate's generic wrapper never
+      // sees this error. It's the only way this operation's error count gets recorded.
+      databaseMetrics.operationErrors.inc({operation: 'saveGame'});
       console.error('PostgreSQL:saveGame', err);
     }
     this.trim(game);
   }
 
+  // Not part of IDatabase, invisible to MetricsDelegate, and invoked fire-and-forget (not awaited) by
+  // saveGame above. Instrumented directly here instead.
   private async trim(game: IGame) {
     if (this.trimCount <= 0) {
       return;
@@ -366,7 +423,6 @@ export class PostgreSQL implements IDatabase {
       await this.client.query(
         'DELETE FROM games WHERE game_id = $1 AND save_id > 0 AND save_id < $2', [game.id, maxSaveId]);
     }
-    return Promise.resolve();
   }
 
   async deleteGameNbrSaves(gameId: GameId, rollbackCount: number): Promise<void> {
@@ -379,7 +435,7 @@ export class PostgreSQL implements IDatabase {
   }
 
   public async storeParticipants(entry: GameIdLedger): Promise<void> {
-    await this.client.query('INSERT INTO participants (game_id, participants) VALUES($1, $2)', [entry.gameId, entry.participantIds]);
+    await this.client.query('INSERT INTO participants (game_id, participants) VALUES($1, $2) ON CONFLICT (game_id) DO NOTHING', [entry.gameId, entry.participantIds]);
   }
 
   public async getParticipants(): Promise<Array<{gameId: GameId, participantIds: Array<ParticipantId>}>> {
@@ -401,31 +457,45 @@ export class PostgreSQL implements IDatabase {
       'save-conflict-undo-count': this.statistics.saveConflictUndoCount,
     };
 
-    const columns = POSTGRESQL_TABLES.map((table_name) => `pg_size_pretty(pg_total_relation_size('${table_name}')) as ${table_name}_size`);
-    const dbsizes = await this.client.query(`SELECT ${columns.join(', ')}, pg_size_pretty(pg_database_size('${this.databaseName}')) as db_size`);
-
     function varz(x: string) {
       return x.replaceAll('_', '-');
     }
 
-    POSTGRESQL_TABLES.forEach((table) => map['size-bytes-' + varz(table)] = dbsizes.rows[0][table + '_size']);
-    map['size-bytes-database'] = dbsizes.rows[0].db_size;
-
-    // Using count(*) is inefficient, but the estimates from here
-    // https://stackoverflow.com/questions/7943233/fast-way-to-discover-the-row-count-of-a-table-in-postgresql
-    // seem wildly inaccurate.
-    //
-    // heroku pg:bloat --app terraforming-mars
-    // shows some bloat
-    // and the postgres command
-    // VACUUM (VERBOSE) shows a fairly reasonable vacumm (no rows locked, for instance),
-    // so it's not clear why those wrong. But these select count(*) commands seem pretty quick
-    // in testing. :fingers-crossed:
-    for (const table of POSTGRESQL_TABLES) {
-      const result = await this.client.query('select count(*) as rowcount from ' + table);
-      map['rows-' + varz(table)] = result.rows[0].rowcount;
+    // Rows with no matching game_id in `games` — these are unreachable via getGame()/getGameVersion()
+    // and are safe to delete.
+    for (const table of ['participants', 'game']) {
+      const result = await this.client.query(
+        `select count(*) as rowcount from ${table} t where not exists (select 1 from games where games.game_id = t.game_id)`);
+      map['orphaned-rows-' + varz(table)] = result.rows[0].rowcount;
     }
     return map;
+  }
+
+  // The size-stat queries: table/index sizes, database size, and row counts.
+  // Throttled by collectSizeStatsIfStale() above; not intended to be called directly elsewhere.
+  private collectSizeStats(): Promise<void> {
+    if (this._client === undefined) {
+      return Promise.resolve();
+    }
+
+    return withDatabaseMetrics('collectSizeStats', async () => {
+      // Row counts use reltuples (a ~1%-accurate estimate) to avoid full count(*) scans.
+      // https://wiki.postgresql.org/wiki/Count_estimate
+      const rowCountResult = await this.client.query(
+        `SELECT s.relname, c.reltuples::bigint AS rowcount, pg_total_relation_size(c.oid) AS size
+         FROM pg_stat_user_tables s
+         JOIN pg_class c ON c.oid = s.relid
+         WHERE s.relname = ANY($1)`,
+        [POSTGRESQL_TABLES]);
+      for (const row of rowCountResult.rows) {
+        const table = row.relname;
+        metrics.tableSizeBytes.set({table}, Number(row.size));
+        metrics.tableRows.set({table}, Number(row.rowcount));
+      }
+
+      const dbSizeResult = await this.client.query('SELECT pg_database_size(current_database()) as db_size');
+      metrics.databaseSizeBytes.set(Number(dbSizeResult.rows[0].db_size));
+    });
   }
 
   public async createSession(session: Session): Promise<void> {
