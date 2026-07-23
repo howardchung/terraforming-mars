@@ -4,7 +4,7 @@ import {Context} from './IHandler';
 import {Database} from '../database/Database';
 import {Request} from '../Request';
 import {Response} from '../Response';
-import { SQLite } from '../database/SQLite';
+import type { SQLite } from '../database/SQLite';
 
 export class ApiStatsPage extends Handler {
   public static readonly INSTANCE = new ApiStatsPage();
@@ -44,7 +44,7 @@ export class ApiStatsPage extends Handler {
     };
     }));
     // Load in person game data from google sheet
-    const response = await fetch('https://sheets.googleapis.com/v4/spreadsheets/1R_Iqge6XPY7GC32V-I0Nl9hjMC7AqI0pn_qM7wA8Oi8/values/Sheet1?key=AIzaSyDAHivgQUlxM9FKaTYuzfKpOKgf0f9hpXI');
+    const response = await fetch('https://googlesheet.howardzchung.workers.dev/?url=https://sheets.googleapis.com/v4/spreadsheets/1R_Iqge6XPY7GC32V-I0Nl9hjMC7AqI0pn_qM7wA8Oi8/values/Sheet1');
     const inPersonData = await response.json();
     const inPersonGames = inPersonData.values.map((g: any) => {
       return {

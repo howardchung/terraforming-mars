@@ -11,7 +11,7 @@ export class Database {
 
   public static getInstance() {
     if (!Database.instance) {
-      Database.instance = new MetricsDelegate(Database.createInstance());
+      Database.instance = Database.createInstance();
     }
     return Database.instance;
   }
