@@ -26,6 +26,6 @@ export class Database {
       return new LocalFilesystem();
     }
     console.log('Connecting to SQLite database.');
-    return new SQLite();
+    return new SQLite(process.env.SQLITE_FILE_NAME);
   }
 }
