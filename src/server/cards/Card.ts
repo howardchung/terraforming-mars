@@ -140,7 +140,7 @@ export abstract class Card implements ICard {
       Card.validateTilesBuilt(external);
       step = 5;
     } catch (e) {
-      throw new Error(`Cannot validate ${name} (${step}): ${e}`);
+      throw new Error(`Cannot validate ${name} (${step})`, {cause: e});
     }
 
     const translatedRequirements = asArray(external.requirements ?? []).map((req) => populateCount(req));
@@ -264,12 +264,15 @@ export abstract class Card implements ICard {
 
   public play(player: IPlayer): PlayerInput | undefined {
     player.stock.deductUnits(MoonExpansion.adjustedReserveCosts(player, this));
+    this.bespokePlayBefore(player);
     if (this.behavior !== undefined) {
       const executor = getBehaviorExecutor();
       executor.execute(this.behavior, player, this);
     }
     return this.bespokePlay(player);
   }
+
+  public bespokePlayBefore(_player: IPlayer): void {}
 
   public bespokePlay(_player: IPlayer): PlayerInput | undefined {
     return undefined;
