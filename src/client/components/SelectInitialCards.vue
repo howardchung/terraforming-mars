@@ -17,8 +17,8 @@
     <SelectCard v-if="hasCeo" :playerView="playerView" :playerinput="ceoCardOption" :onsave="noop" :showtitle="true" @cardschanged="ceosChanged" />
     <SelectCard :playerView="playerView" :playerinput="projectCardOption" :onsave="noop" :showtitle="true" @cardschanged="cardsChanged" />
     <template v-if="selectedCorporations.length === 1">
-      <div><span v-i18n>Starting Megacredits:</span> <div class="megacredits">{{getStartingMegacredits()}}</div></div>
-      <div v-if="hasPrelude"><span v-i18n>After Preludes:</span> <div class="megacredits">{{getStartingMegacredits() + getAfterPreludes()}}</div></div>
+      <div><span v-i18n>Starting M€:</span> <div class="starting-megacredits">{{getStartingMegacredits()}}</div></div>
+      <div v-if="hasPrelude"><span v-i18n>After Preludes:</span> <div class="starting-megacredits">{{getStartingMegacredits() + getAfterPreludes()}}</div></div>
     </template>
     <div v-if="warning !== undefined" class="tm-warning">
       <label class="label label-error">{{ $t(warning) }}</label>
@@ -201,7 +201,7 @@ export default defineComponent({
       }
       const corpName = this.selectedCorporations[0];
       const corporation = getCardOrThrow(corpName);
-      // The ?? 0 is only because IClientCard applies to _all_ cards.
+      // The ?? 0 is only because ClientCard applies to _all_ cards.
 
       let starting = corporation.startingMegaCredits ?? 0;
       const cardCost = corporation.cardCost === undefined ? constants.CARD_COST : corporation.cardCost;

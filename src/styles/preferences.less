@@ -11,6 +11,18 @@
   height: 100%;
 }
 
+/* On touch screens the page is scaled down to fit the 1260px viewport, which makes the sidebar and corner icons too small to tap.
+   Portrait only: in landscape there is not enough height for a larger sidebar. */
+@media (hover: none) and (pointer: coarse) and (orientation: portrait) {
+  .sidebar_cont,
+  .card-list-container .free-floating-preferences-icon {
+    zoom: 2;
+  }
+  .main-container:has(.sidebar_cont) {
+    margin-left: 120px;
+  }
+}
+
 .sidebar {
   .tm {
     background: url(./assets/board/mars.png);
@@ -344,42 +356,41 @@
 }
 
 /* Card Magnification */
-.preferences_magnify_cards {
-  .filterDiv {
-    transition: transform 0.15s;
-  }
-  .filterDiv:hover {
-    transform: scale(1.2);
-    z-index: 100;
-  }
+/* Only on devices with a real pointer; on touch screens :hover sticks after a tap. */
+@media (hover: hover) and (pointer: fine) {
+  .preferences_magnify_cards {
+    .filterDiv {
+      transition: transform 0.15s;
+    }
+    .filterDiv:hover {
+      transform: scale(1.2);
+      z-index: 100;
+    }
 
-  .dragging .filterDiv:hover {
-    transform: none;
-  }
+    .dragging .filterDiv:hover {
+      transform: none;
+    }
 
-  .sortable-cards > div:active .filterDiv {
-    transition: none;
-    transform: none;
-  }
+    .sortable-cards > div:active .filterDiv {
+      transition: none;
+      transform: none;
+    }
 
-  .cards-stack:hover,
-  .cards-stack-first:hover {
-    z-index: 2;
-    transform: scale(1);
-  }
+    .cards-stack:hover,
+    .cards-stack-first:hover {
+      z-index: 2;
+      transform: scale(1);
+    }
 
-  .global-event:hover {
-    transform: scale(1.2);
-    z-index: 2;
+    .global-event:hover {
+      transform: scale(1.2);
+      z-index: 2;
+    }
   }
-}
-/* Magnify the wee little cards in a special way, if requested */
-.preferences_small_cards.preferences_magnify_cards .filterDiv:hover {
-  transform: scale(0.95);
-}
-
-.info_panel-spacing {
-  padding-bottom: 40px;
+  /* Magnify the wee little cards in a special way, if requested */
+  .preferences_small_cards.preferences_magnify_cards .filterDiv:hover {
+    transform: scale(0.95);
+  }
 }
 
 .info-panel-title {
@@ -388,11 +399,11 @@
   font-family: Arial, sans-serif;
   font-weight: bold;
   text-align: left;
-  padding-bottom: 15px;
+  padding-top: 15px;
 }
 
 .info_panel {
-  padding: 15px 15px 15px 20px;
+  padding: 15px 50px 15px 20px;
   display: inline-block;
   position: absolute;
   bottom: 0px;
@@ -401,6 +412,11 @@
   background: #000000;
   max-height: calc(85vh);
   overflow-y: auto;
+}
+
+// Outranks .game-setup-detail-container .game-config, which sets the margin.
+.info_panel .game-config.info-panel-deck-size {
+  margin-left: auto;
 }
 
 .info_panel_actions {

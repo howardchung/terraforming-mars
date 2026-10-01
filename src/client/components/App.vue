@@ -3,7 +3,7 @@
     <section>
       <dialog id="alert-dialog" class="alert-dialog">
         <form method="dialog">
-          <p id="alert-title" class="title" v-i18n>Error with input</p>
+          <p id="alert-dialog-title" class="title" v-i18n>Error with input</p>
           <p id="alert-dialog-message"></p>
           <menu class="dialog-menu centered-content">
             <button id="alert-dialog-button" class="btn btn-lg btn-primary">OK</button>
@@ -32,9 +32,8 @@
         :key="'spectator-' + playerkey"
       />
       <GameEnd
-        v-else-if="screen === 'the-end'"
-        :player-view="playerView"
-        :spectator="spectator"
+        v-else-if="screen === 'the-end' && participant !== undefined"
+        :participant="participant"
       />
       <GamesOverview
         v-else-if="screen === 'games-overview'"
@@ -154,6 +153,11 @@ export default defineComponent({
     Help,
     AdminHome,
     LoginHome,
+  },
+  computed: {
+    participant(): ViewModel | undefined {
+      return this.playerView ?? this.spectator;
+    },
   },
   methods: {
     showAlert(title: string, message: string, cb: () => void = () => {}): void {
