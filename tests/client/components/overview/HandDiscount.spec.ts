@@ -1,16 +1,16 @@
 import {shallowMount} from '@vue/test-utils';
 import {expect} from 'chai';
 import {globalConfig} from '../getLocalVue';
-import CardHelp from '@/client/components/card/CardHelp.vue';
+import HandDiscount from '@/client/components/overview/HandDiscount.vue';
 import {CardName} from '@/common/cards/CardName';
 
-describe('CardHelp', () => {
+describe('HandDiscount', () => {
   it('mounts without errors', () => {
-    const wrapper = shallowMount(CardHelp, {
+    const wrapper = shallowMount(HandDiscount, {
       ...globalConfig,
       props: {
-        name: CardName.ECOLINE,
-        helpText: 'Some help.',
+        amount: 2,
+        conditional: [{source: CardName.CUTTING_EDGE_TECHNOLOGY, amount: 2, appliesTo: 'cards with requirements'}],
       },
     });
     expect(wrapper.exists()).to.be.true;

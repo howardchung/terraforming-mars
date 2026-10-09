@@ -117,7 +117,7 @@
                                     <span v-i18n>Agendas</span>&nbsp;<a href="https://www.notion.so/Political-Agendas-8c6b0b018a884692be29b3ef44b340a9" class="tooltip" v-i18n data-tooltip="Link opens in a new tab/window" target="_blank">&#9432;</a>
                                 </label>
 
-                                <div class="create-game-page-column-row" v-if="isPoliticalAgendasExtensionEnabled()">
+                                <div class="create-game-page-column-row" v-if="isPoliticalAgendasExtensionEnabled">
                                     <div>
                                     <input type="radio" name="agendaStyle" v-model="politicalAgendasExtension" :value="getPoliticalAgendasExtensionAgendaStyle('random')" id="randomAgendaStyle-radio">
                                     <label class="label-agendaStyle agendaStyle-random" for="randomAgendaStyle-radio">
@@ -387,7 +387,7 @@
                                 <span v-i18n>Random Milestones/Awards</span>&nbsp;<a :href="wikiUrls.randomMilestonesAndAwards" class="tooltip" v-i18n data-tooltip="Link opens in a new tab/window" target="_blank">&#9432;</a>
                             </label>
 
-                            <div class="create-game-page-column-row" v-if="isRandomMAEnabled()">
+                            <div class="create-game-page-column-row" v-if="isRandomMAEnabled">
                                 <div>
                                 <input type="radio" name="randomMAOption" v-model="randomMA" :value="getRandomMaOptionType('limited')" id="limitedRandomMA-radio">
                                 <label class="label-randomMAOption" for="limitedRandomMA-radio">
@@ -445,7 +445,7 @@
                             </div>
                             <div class="container">
                                 <div class="columns">
-                                  <template v-for="(newPlayer, index) in getPlayers()" :key="index">
+                                  <template v-for="(newPlayer, index) in getPlayers" :key="index">
                                     <div>
                                       <div :class="'form-group col6 create-game-player '+getPlayerContainerColorClass(newPlayer.color)">
                                           <div>
@@ -463,7 +463,7 @@
                                           </div>
                                           <div>
                                               <!-- <template v-if="beginnerOption"> -->
-                                                  <label v-if="isBeginnerToggleEnabled()" class="form-switch form-inline create-game-beginner-option-label">
+                                                  <label v-if="isBeginnerToggleEnabled" class="form-switch form-inline create-game-beginner-option-label">
                                                       <input type="checkbox" v-model="newPlayer.beginner">
                                                       <i class="form-icon"></i> <span v-i18n>Beginner?</span>&nbsp;<a :href="wikiUrls.beginnerCorporation" class="tooltip" v-i18n data-tooltip="Link opens in a new tab/window" target="_blank">&#9432;</a>
                                                   </label>
@@ -602,15 +602,13 @@ import {CreateGameModel} from './CreateGameModel';
 import {paths} from '@/common/app/paths';
 import {JSONProcessor} from './JSONProcessor';
 import {defaultCreateGameModel} from './defaultCreateGameModel';
-import {CreateGameSettingsStorage} from './CreateGameSettingsStorage';
+import {createGameSettingsStorage} from './createGameSettingsStorage';
 import {getColony} from '@/client/colonies/ClientColonyManifest';
 import {RULEBOOK_URLS, WIKI, WIKI_URLS} from '@/client/utils/WikiLinks';
 import {setDocumentTitle} from '@/client/utils/documentTitle';
 import {sanitizeEscapeVelocityOptions} from '@/common/game/escapeVelocity';
 import {validateNewGameConfig, validationDetails, ValidationErrors} from '@/common/game/validateNewGameConfig';
 import ValidationErrorsPopup from './ValidationErrorsPopup.vue';
-
-const createGameSettingsStorage = new CreateGameSettingsStorage();
 
 type Refs = {
   file: HTMLInputElement;
@@ -819,10 +817,22 @@ export default defineComponent({
         RandomBoardOption.ALL,
       ];
     },
+    getPlayers(): Array<NewPlayerModel> {
+      return this.players.slice(0, this.playersCount);
+    },
+    isRandomMAEnabled(): Boolean {
+      return this.randomMA !== RandomMAOptionType.NONE;
+    },
+    isPoliticalAgendasExtensionEnabled(): Boolean {
+      return this.politicalAgendasExtension !== 'Standard';
+    },
+    isBeginnerToggleEnabled(): Boolean {
+      return !(this.initialDraft || this.expansions.prelude || this.expansions.venus || this.expansions.colonies || this.expansions.turmoil);
+    },
   },
   methods: {
     restoreLastSettings() {
-      const settings = createGameSettingsStorage.loadSettings();
+      const settings = createGameSettingsStorage.load();
       if (settings === undefined) {
         return;
       }
@@ -832,8 +842,8 @@ export default defineComponent({
           this.showSettingsLoadResult('Restore settings', processor);
         }
       } catch (e) {
-        // TODO(rusliksu): show the restore error in the UI instead of logging only to the console.
         console.warn('Could not restore create game settings:', e);
+        vueRoot(this).showAlert('Restore settings', 'Error restoring settings ' + e);
       }
     },
     applySettings(json: JSONObject): JSONProcessor {
@@ -874,7 +884,7 @@ export default defineComponent({
       }
     },
     resetSettings() {
-      createGameSettingsStorage.clearSettings();
+      createGameSettingsStorage.clear();
       Object.assign(this, defaultCreateGameModel(), {
         preludeToggled: false,
         uploading: false,
@@ -944,12 +954,6 @@ export default defineComponent({
     updateCustomCeos(customCeos: Array<CardName>) {
       this.customCeos = customCeos;
     },
-    getPlayers(): Array<NewPlayerModel> {
-      return this.players.slice(0, this.playersCount);
-    },
-    isRandomMAEnabled(): Boolean {
-      return this.randomMA !== RandomMAOptionType.NONE;
-    },
     randomMAToggle() {
       if (this.randomMA === RandomMAOptionType.NONE) {
         this.randomMA = RandomMAOptionType.LIMITED;
@@ -965,9 +969,6 @@ export default defineComponent({
       } else {
         return RandomMAOptionType.NONE;
       }
-    },
-    isPoliticalAgendasExtensionEnabled(): Boolean {
-      return this.politicalAgendasExtension !== 'Standard';
     },
     politicalAgendasExtensionToggle() {
       if (this.politicalAgendasExtension === 'Standard') {
@@ -985,9 +986,6 @@ export default defineComponent({
         console.warn('AgendaStyle not found');
         return 'Standard';
       }
-    },
-    isBeginnerToggleEnabled(): Boolean {
-      return !(this.initialDraft || this.expansions.prelude || this.expansions.venus || this.expansions.colonies || this.expansions.turmoil);
     },
     getPlayersCountText(count: number): string {
       if (count === 1) {
@@ -1154,7 +1152,7 @@ export default defineComponent({
       if (newGameConfig === undefined) {
         return;
       }
-      createGameSettingsStorage.saveSettings(newGameConfig);
+      createGameSettingsStorage.save(newGameConfig);
       const onSuccess = (json: any) => {
         if (json.players.length === 1) {
           window.location.href = 'player?id=' + json.players[0].id;
