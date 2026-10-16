@@ -155,7 +155,7 @@ export class ApiStats extends Handler {
     return { data: final };
   }
 
-  public override async get(req: Request, res: Response, ctx: Context): Promise<void> {
+  public override async get(_req: Request, res: Response, ctx: Context): Promise<void> {
     try {
       res.setHeader('Access-Control-Allow-Origin', '*');
       const stats = await this.getStatsPage();
