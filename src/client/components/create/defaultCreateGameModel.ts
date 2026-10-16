@@ -1,25 +1,25 @@
 import * as constants from '@/common/constants';
-import {BoardName} from '@/common/boards/BoardName';
 import {DEFAULT_EXPANSIONS} from '@/common/cards/GameModule';
 import {RandomMAOptionType} from '@/common/ma/RandomMAOptionType';
 import {CreateGameModel} from './CreateGameModel';
+import { RandomBoardOption } from '@/common/boards/RandomBoardOption';
 
 export function defaultCreateGameModel(): CreateGameModel {
   return {
     firstIndex: 1,
-    playersCount: 1,
+    playersCount: 2,
     players: [
-      {name: '', color: 'red', beginner: false, handicap: 0, first: false},
-      {name: '', color: 'green', beginner: false, handicap: 0, first: false},
-      {name: '', color: 'yellow', beginner: false, handicap: 0, first: false},
+      {name: 'Howard', color: 'red', beginner: false, handicap: 0, first: false},
+      {name: 'Tino', color: 'purple', beginner: false, handicap: 0, first: false},
+      {name: 'Yvonne', color: 'green', beginner: false, handicap: 0, first: false},
       {name: '', color: 'blue', beginner: false, handicap: 0, first: false},
       {name: '', color: 'black', beginner: false, handicap: 0, first: false},
-      {name: '', color: 'purple', beginner: false, handicap: 0, first: false},
+      {name: '', color: 'yellow', beginner: false, handicap: 0, first: false},
       {name: '', color: 'orange', beginner: false, handicap: 0, first: false},
       {name: '', color: 'pink', beginner: false, handicap: 0, first: false},
     ],
     expansions: {...DEFAULT_EXPANSIONS},
-    draftVariant: true,
+    draftVariant: false,
     initialDraft: false,
     randomMA: RandomMAOptionType.NONE,
     modularMA: false,
@@ -38,7 +38,7 @@ export function defaultCreateGameModel(): CreateGameModel {
     customPreludes: [],
     bannedCards: [],
     includedCards: [],
-    board: BoardName.THARSIS,
+    board: RandomBoardOption.OFFICIAL,
     seed: Math.random(),
     seededGame: false,
     solarPhaseOption: false,
@@ -50,7 +50,7 @@ export function defaultCreateGameModel(): CreateGameModel {
     fastModeOption: false,
     removeNegativeGlobalEventsOption: false,
     includeFanMA: false,
-    startingCorporations: 2,
+    startingCorporations: 3,
     soloTR: false,
     clonedGameId: undefined,
     allOfficialExpansions: false,
@@ -66,7 +66,7 @@ export function defaultCreateGameModel(): CreateGameModel {
     escapeVelocityPenalty: constants.DEFAULT_ESCAPE_VELOCITY_PENALTY,
     twoCorpsVariant: false,
     startingCeos: 3,
-    startingPreludes: 4,
+    startingPreludes: 6,
     preludeDraftVariant: undefined,
     ceosDraftVariant: undefined,
   };

@@ -286,6 +286,10 @@ export class SQLite implements IDatabase {
     });
   }
 
+  public async getCompletedGames(): Promise<Array<any>> {
+    return this.asyncAll('SELECT * FROM completed_game');
+  }
+
   protected asyncRun(sql: string, params?: any): Promise<BetterSqlite3.RunResult> {
     try {
       const stmt = this.db.prepare(sql);

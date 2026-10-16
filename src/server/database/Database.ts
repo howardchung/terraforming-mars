@@ -2,7 +2,6 @@ import {PostgreSQL} from './PostgreSQL';
 import {SQLite} from './SQLite';
 import {IDatabase} from './IDatabase';
 import {LocalFilesystem} from './LocalFilesystem';
-import {MetricsDelegate} from './MetricsDelegate';
 
 export class Database {
   private static instance: IDatabase;
@@ -11,7 +10,7 @@ export class Database {
 
   public static getInstance() {
     if (!Database.instance) {
-      Database.instance = new MetricsDelegate(Database.createInstance());
+      Database.instance = Database.createInstance();
     }
     return Database.instance;
   }
@@ -26,6 +25,6 @@ export class Database {
       return new LocalFilesystem();
     }
     console.log('Connecting to SQLite database.');
-    return new SQLite();
+    return new SQLite(process.env.SQLITE_FILE_NAME);
   }
 }
