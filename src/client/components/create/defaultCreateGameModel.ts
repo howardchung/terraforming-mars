@@ -3,6 +3,7 @@ import {DEFAULT_EXPANSIONS} from '@/common/cards/GameModule';
 import {RandomMAOptionType} from '@/common/ma/RandomMAOptionType';
 import {CreateGameModel} from './CreateGameModel';
 import { RandomBoardOption } from '@/common/boards/RandomBoardOption';
+import { boardOptions } from '@/common/boards/randomBoardOptions';
 
 export function defaultCreateGameModel(): CreateGameModel {
   return {
@@ -38,7 +39,7 @@ export function defaultCreateGameModel(): CreateGameModel {
     customPreludes: [],
     bannedCards: [],
     includedCards: [],
-    board: RandomBoardOption.OFFICIAL,
+    boards: boardOptions(RandomBoardOption.OFFICIAL),
     seed: Math.random(),
     seededGame: false,
     solarPhaseOption: false,
