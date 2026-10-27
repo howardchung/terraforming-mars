@@ -1,6 +1,8 @@
 <template>
   <div id="spectator-home" :class="(game.turmoil ? 'with-turmoil': '')">
 
+    <AiControlBar :participantId="spectator.id" :isSpectator="true" />
+
     <div v-if="game.phase === 'end'">
       <div class="player_home_block">
         <DynamicTitle title="This game is over!" :color="spectator.color"/>
@@ -77,6 +79,7 @@ import WaitingFor from '@/client/components/WaitingFor.vue';
 import PlayersOverview from '@/client/components/overview/PlayersOverview.vue';
 import PurgeWarning from '@/client/components/common/PurgeWarning.vue';
 import KeyboardShortcuts from '@/client/components/KeyboardShortcuts.vue';
+import AiControlBar from '@/client/components/rl/AiControlBar.vue';
 import {range} from '@/common/utils/utils';
 import {HomeMixin} from '@/client/mixins/HomeMixin';
 
@@ -95,6 +98,7 @@ export default defineComponent({
     },
   },
   components: {
+    AiControlBar,
     Colony,
     DynamicTitle,
     GameBoardView,

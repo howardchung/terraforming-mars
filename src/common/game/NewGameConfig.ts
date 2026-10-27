@@ -13,6 +13,7 @@ export interface NewPlayerModel {
   beginner: boolean;
   handicap: number;
   first: boolean;
+  aiType?: 'human' | 'rl' | 'heuristic' | 'random';
 }
 
 export type EscapeVelocityOptions = {

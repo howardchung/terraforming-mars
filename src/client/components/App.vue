@@ -40,6 +40,7 @@
       <AdminHome v-else-if="screen === 'admin'"/>
       <LoginHome v-else-if="screen === 'login-home'"/>
       <Help v-else-if="screen === 'help'"/>
+      <RlArena v-else-if="screen === 'rl-arena'"/>
     </div>
     <div class="notice" v-i18n>
       Not affiliated with FryxGames, Asmodee Digital or Steam in any way.
@@ -63,6 +64,7 @@ const LoadGameForm = defineAsyncComponent(() => import(/* webpackChunkName: "loa
 const PlayerHome = defineAsyncComponent(() => import(/* webpackChunkName: "player-home" */ '@/client/components/PlayerHome.vue'));
 const SpectatorHome = defineAsyncComponent(() => import(/* webpackChunkName: "spectator-home" */ '@/client/components/SpectatorHome.vue'));
 const StartScreen = defineAsyncComponent(() => import(/* webpackChunkName: "start-screen" */ '@/client/components/StartScreen.vue'));
+const RlArena = defineAsyncComponent(() => import(/* webpackChunkName: "rl-arena" */ '@/client/components/rl/RlArena.vue'));
 import {$t, setTranslationContext} from '@/client/directives/i18n';
 import {paths} from '@/common/app/paths';
 import {PlayerViewModel, ViewModel} from '@/common/models/PlayerModel';
@@ -84,6 +86,7 @@ type Screen = 'admin' |
             'load' |
             'login-home' |
             'player-home' |
+            'rl-arena' |
             'spectator-home' |
             'start-screen' |
             'the-end';
@@ -146,6 +149,7 @@ export default defineComponent({
     Help,
     AdminHome,
     LoginHome,
+    RlArena,
   },
   computed: {
     participant(): ViewModel | undefined {
@@ -297,6 +301,8 @@ export default defineComponent({
       app.screen = 'admin';
     } else if (currentPathname === paths.LOGIN) {
       app.screen = 'login-home';
+    } else if (currentPathname === paths.RL) {
+      app.screen = 'rl-arena';
     } else {
       app.screen = 'start-screen';
     }

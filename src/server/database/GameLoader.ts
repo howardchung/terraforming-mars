@@ -84,6 +84,19 @@ const metrics = {
  */
 export class GameLoader implements IGameLoader {
   private static instance: GameLoader;
+  private static readonly trainingGameIds = new Set<GameId>();
+
+  public static markAsTrainingGame(gameId: GameId): void {
+    GameLoader.trainingGameIds.add(gameId);
+  }
+
+  public static unmarkTrainingGame(gameId: GameId): void {
+    GameLoader.trainingGameIds.delete(gameId);
+  }
+
+  public static isTrainingGame(gameId: GameId): boolean {
+    return GameLoader.trainingGameIds.has(gameId);
+  }
 
   private cache: Cache;
   private readonly config: CacheConfig;
@@ -164,6 +177,18 @@ export class GameLoader implements IGameLoader {
     }
   }
 
+  public async removeTrainingGame(game: IGame): Promise<void> {
+    GameLoader.unmarkTrainingGame(game.id);
+    const d = await this.cache.getGames();
+    d.games.delete(game.id);
+    if (game.spectatorId !== undefined) {
+      d.participantIds.delete(game.spectatorId);
+    }
+    for (const player of game.players) {
+      d.participantIds.delete(player.id);
+    }
+  }
+
   public async getIds(): Promise<Array<GameIdLedger>> {
     const d = await this.cache.getGames();
     const map = new MultiMap<GameId, ParticipantId>();
@@ -191,7 +216,7 @@ export class GameLoader implements IGameLoader {
       // An idle sweep may have dropped the log to save memory (see Cache.trimIdleLogs).
       // Reload it from the database before returning so callers never see or persist a
       // truncated log.
-      if (cached.gameLog.length === 0) {
+      if (cached.gameLog.length === 0 && !GameLoader.isTrainingGame(gameId)) {
         await this.restoreGameLog(cached);
       }
       return cached;
@@ -258,6 +283,9 @@ export class GameLoader implements IGameLoader {
   }
 
   public async completeGame(game: IGame) {
+    if (GameLoader.isTrainingGame(game.id)) {
+      return;
+    }
     const database = Database.getInstance();
     await database.saveGame(game);
     try {
@@ -271,6 +299,10 @@ export class GameLoader implements IGameLoader {
   }
 
   public saveGame(game: IGame): Promise<void> {
+    if (GameLoader.isTrainingGame(game.id)) {
+      game.lastSaveId += 1;
+      return Promise.resolve();
+    }
     if (this.purgedGames.includes(game.id)) {
       throw new Error('This game no longer exists');
     }

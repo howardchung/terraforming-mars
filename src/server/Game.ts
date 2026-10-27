@@ -473,6 +473,10 @@ export class Game implements IGame, Logger {
   }
 
   public save(): void {
+    if (GameLoader.isTrainingGame(this.id)) {
+      this.lastSaveId += 1;
+      return;
+    }
     GameLoader.getInstance().saveGame(this);
   }
 
@@ -1125,6 +1129,11 @@ export class Game implements IGame, Logger {
       const vpb = player.getVictoryPoints();
       scores.push({corporation: corporation, playerScore: vpb.total});
     });
+
+    if (GameLoader.isTrainingGame(this.id)) {
+      this.phase = Phase.END;
+      return;
+    }
 
     Database.getInstance().saveGameResults(this.id, this.players.length, this.generation, this.gameOptions, scores);
     this.phase = Phase.END;

@@ -19,6 +19,7 @@ import {readBody} from './readBody';
 import {RouteError} from './RouteError';
 import {CEO_CARDS_DEALT_PER_PLAYER} from '../../common/constants';
 import {hasNegativeEscapeVelocityOption, sanitizeEscapeVelocityOptions} from '../../common/game/escapeVelocity';
+import {AgentManager, AgentPolicyType} from '../rl/AgentManager';
 
 function parseQuotaConfig(struct: any): QuotaConfig {
   let {limit} = struct;
@@ -194,6 +195,25 @@ export class ApiCreateGame extends Handler {
         game = Game.newInstance(gameId, players, players[firstPlayerIdx], spectatorId, gameOptions, seed);
       }
       ctx.gameLoader.add(game);
+
+      const aiConfigs: Array<{playerId: (typeof players)[0]['id']; policyType: AgentPolicyType}> = [];
+      for (let i = 0; i < gameReq.players.length; i++) {
+        const reqPlayer = gameReq.players[i];
+        const createdPlayer = players[i];
+        let policy: AgentPolicyType | undefined;
+        if (reqPlayer.aiType && reqPlayer.aiType !== 'human') {
+          policy = reqPlayer.aiType;
+        } else {
+          policy = AgentManager.inferPolicyFromPlayerName(reqPlayer.name);
+        }
+        if (policy !== undefined) {
+          aiConfigs.push({playerId: createdPlayer.id, policyType: policy});
+        }
+      }
+      if (aiConfigs.length > 0) {
+        AgentManager.getInstance().registerGame(game, aiConfigs);
+      }
+
       responses.writeJson(res, ctx, Server.getSimpleGameModel(game));
     } catch (error) {
       if (error instanceof RouteError) {

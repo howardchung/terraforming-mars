@@ -241,7 +241,7 @@ export default defineComponent({
         xhr.responseType = 'json';
         xhr.send();
       };
-      ui_update_timeout_id = window.setTimeout(askForUpdate, raw_settings.waitingForTimeout);
+      ui_update_timeout_id = window.setTimeout(askForUpdate, Math.min(raw_settings.waitingForTimeout, 600));
     },
     /**
      * While this player makes a simultaneous choice (e.g. drafting), keep the other

@@ -458,6 +458,16 @@
                                                   <input type="radio" name="firstIndex" :value="index + 1" v-model="firstIndex">
                                                   <i class="form-icon"></i> <span v-i18n>Goes First?</span>
                                               </label>
+
+                                              <label class="form-label" style="display: block; margin-top: 6px;">
+                                                  <span v-i18n>Controller:</span>
+                                                  <select v-model="newPlayer.aiType" class="form-input form-inline" style="margin-left: 6px; padding: 2px 6px;">
+                                                      <option :value="undefined">Human Player</option>
+                                                      <option value="rl">🤖 RL Agent (PPO)</option>
+                                                      <option value="heuristic">🤖 Heuristic AI</option>
+                                                      <option value="random">🤖 Random AI</option>
+                                                  </select>
+                                              </label>
                                           </div>
                                       </div>
                                     </div>
@@ -481,6 +491,7 @@
 
                         <AppButton class="create-game-action-gap" title="Reset" size="big" @click="resetSettings"/>
                         <AppButton class="create-game-action-gap" title="Create game" size="big" @click="createGame" :disabled="hasBlockingValidationErrors"/>
+                        <a href="/rl" class="btn btn-lg create-game-action-gap" style="margin-left: 10px;">🚀 RL AI Arena</a>
                         <span v-if="hasBlockingValidationErrors" class="create-game-custom-preludes-warning create-game-validation-blocker" @click="showValidationErrors = true">&#9888;&#xFE0E;</span>
                         <span v-else-if="hasValidationProblems" class="create-game-validation-warning" @click="showValidationErrors = true">&#9888;&#xFE0F;</span>
                     </div>
@@ -1076,8 +1087,17 @@ export default defineComponent({
       }
       createGameSettingsStorage.save(newGameConfig);
       const onSuccess = (json: any) => {
+        const aiPlayersCount = newGameConfig.players.filter((p) => Boolean(p.aiType)).length;
+        const humanPlayers = newGameConfig.players.filter((p) => !p.aiType);
         if (json.players.length === 1) {
           window.location.href = 'player?id=' + json.players[0].id;
+          return;
+        } else if (aiPlayersCount === newGameConfig.players.length && json.spectatorId) {
+          window.location.href = 'spectator?id=' + json.spectatorId;
+          return;
+        } else if (aiPlayersCount > 0 && humanPlayers.length === 1) {
+          const humanSeat = json.players.find((p: any) => p.color === humanPlayers[0].color) || json.players[0];
+          window.location.href = 'player?id=' + humanSeat.id;
           return;
         } else {
           window.history.replaceState(json, `${constants.APP_NAME} - Game`, 'game?id=' + json.id);
