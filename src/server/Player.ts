@@ -38,7 +38,6 @@ import {TurmoilHandler} from './turmoil/TurmoilHandler';
 import {AllOptions, DrawCards, DrawOptions} from './deferredActions/DrawCards';
 import {Units} from '../common/Units';
 import {MoonExpansion} from './moon/MoonExpansion';
-import {IStandardProjectCard} from './cards/IStandardProjectCard';
 import {ConvertPlants} from './cards/base/standardActions/ConvertPlants';
 import {ConvertHeat} from './cards/base/standardActions/ConvertHeat';
 import {KELVINISTS_POLICY_3} from './turmoil/parties/Kelvinists';
@@ -63,6 +62,7 @@ import {Supercapacitors} from './cards/promo/Supercapacitors';
 import {CanAffordOptions, CardAction, IPlayer} from './IPlayer';
 import {IPreludeCard} from './cards/prelude/IPreludeCard';
 import {copyAndClear, inplaceRemove, sum, toName} from '../common/utils/utils';
+import {generateRandomId} from './utils/server-ids';
 import {PreludesExpansion} from './preludes/PreludesExpansion';
 import {ChooseCards} from './deferredActions/ChooseCards';
 import {UnderworldPlayerData} from '../common/underworld/UnderworldPlayerData';
@@ -185,6 +185,7 @@ export class Player implements IPlayer {
 
   public user?: DiscordId;
   public inputRequestedAt?: number;
+  public requestId?: string;
   public clock: Clock = new Clock();
 
   public get megaCredits(): number {
@@ -864,7 +865,7 @@ export class Player implements IPlayer {
           (b) => b
             .player(this)
             .card(selectedCard)
-            .string(Payment.toLogString(payment)));
+            .markdown(Payment.toLogString(payment)));
       }
     }
 
@@ -954,10 +955,6 @@ export class Player implements IPlayer {
     PathfindersExpansion.onCardPlayed(this, card);
   }
 
-  public playActionCard(): PlayerInput {
-    return this.selectCardAction('Perform an action from a played card', this.getPlayableActionCards());
-  }
-
   private getPlayCeoOPGAction(): PlayerInput | undefined {
     const cards = CeoExtension.getUsableOPGCeoCards(this);
     if (cards.length === 0) {
@@ -993,9 +990,17 @@ export class Player implements IPlayer {
       this.cardCost += corporationCard.cardCost - constants.CARD_COST;
     }
 
+    // Luna Trade Federation may pay with its starting titanium, which only arrives when the corp is played.
+    // TODO(kberg): Always pay with SelectPaymentDeferred, which pays with M€ when there's no choice,
+    // and log "kept N project cards" in its andThen.
+    let deferredCardCost = 0;
     if (additionalCorp === false && corporationCard.name !== CardName.BEGINNER_CORPORATION) {
       const diff = this.cardsInHand.length * this.cardCost;
-      this.stock.deduct(Resource.MEGACREDITS, diff);
+      if (corporationCard.name === CardName.LUNA_TRADE_FEDERATION) {
+        deferredCardCost = diff;
+      } else {
+        this.stock.deduct(Resource.MEGACREDITS, diff);
+      }
       if (diff > 0) {
         PathfindersExpansion.addToSolBank(this);
       }
@@ -1005,6 +1010,9 @@ export class Player implements IPlayer {
     const numberOfCardInHand = this.cardsInHand.length;
     ColoniesHandler.maybeActivateColonies(this.game, corporationCard);
     this.defer(corporationCard.play(this));
+    if (deferredCardCost > 0) {
+      this.game.defer(new SelectPaymentDeferred(this, deferredCardCost, {title: 'Select how to pay for your project cards'}));
+    }
     if (corporationCard.initialAction !== undefined && corporationCard.initialActionText !== undefined) {
       this.pendingInitialActions.push(corporationCard);
     }
@@ -1100,7 +1108,12 @@ export class Player implements IPlayer {
     } else {
       const baseCost = this.milestoneCost();
       const cost = baseCost + ((milestone.name === 'Briber') ? 12 : 0);
-      const reserveUnits = milestone.name === 'Merchant' ? Units.every(2) : Units.EMPTY;
+      let reserveUnits = Units.EMPTY;
+      if (milestone.name === 'Merchant') {
+        reserveUnits = Units.every(2);
+      } else if (milestone.name === 'Merchant3') {
+        reserveUnits = Units.every(3);
+      }
       this.game.defer(new SelectPaymentDeferred(this, cost, {title: 'Select how to pay for milestone', reserveUnits: reserveUnits})).andThen(() => {
         recordClaim();
       });
@@ -1404,13 +1417,11 @@ export class Player implements IPlayer {
   }
 
   public getStandardProjectOption(): SelectStandardProjectToPlay {
-    const standardProjects: Array<IStandardProjectCard> = this.game.getStandardProjects();
-
     return new SelectStandardProjectToPlay(
       this,
-      standardProjects,
+      this.game.standardProjects,
       {
-        enabled: standardProjects.map((card) => card.canAct(this)),
+        enabled: this.game.standardProjects.map((card) => card.canAct(this)),
         title: 'Standard projects',
         buttonLabel: 'Confirm',
       });
@@ -1589,8 +1600,9 @@ export class Player implements IPlayer {
     }
 
     // Action cards
-    if (this.getPlayableActionCards().length > 0) {
-      action.options.push(this.playActionCard());
+    const playableActionCards = this.getPlayableActionCards();
+    if (playableActionCards.length > 0) {
+      action.options.push(this.selectCardAction('Perform an action from a played card', playableActionCards));
     }
 
     // CEO cards
@@ -1673,8 +1685,10 @@ export class Player implements IPlayer {
     }
     const waitingFor = this.waitingFor;
     const waitingForCb = this.waitingForCb;
+    const requestId = this.requestId;
     this.waitingFor = undefined;
     this.waitingForCb = undefined;
+    this.requestId = undefined;
     try {
       if (!waitingFor.optional) {
         this.timer.stop();
@@ -1683,6 +1697,8 @@ export class Player implements IPlayer {
       waitingForCb();
     } catch (err) {
       this.setWaitingFor(waitingFor, waitingForCb);
+      // The player is still answering the same request.
+      this.requestId = requestId;
       throw err;
     }
   }
@@ -1705,6 +1721,7 @@ export class Player implements IPlayer {
     }
     this.waitingFor = input;
     this.waitingForCb = cb;
+    this.requestId = generateRandomId('');
     this.inputRequestedAt = this.clock.now();
     this.game.inputsThisRound++;
   }
@@ -1737,6 +1754,7 @@ export class Player implements IPlayer {
     const waitingFor = this.waitingFor;
     this.waitingFor = undefined;
     this.waitingForCb = undefined;
+    this.requestId = undefined;
     if (waitingFor !== undefined && !waitingFor.optional) {
       this.timer.stop();
     }

@@ -362,10 +362,18 @@
                                 <span v-i18n>Random first player</span>
                             </label>
 
-                            <input type="checkbox" name="randomMAToggle" id="randomMA-checkbox" @change="randomMAToggle()">
+                            <input type="checkbox" name="randomMAToggle" id="randomMA-checkbox" :checked="isRandomMAEnabled" @change="randomMAToggle()">
                             <label for="randomMA-checkbox">
                                 <span v-i18n>Random Milestones/Awards</span>&nbsp;<a :href="wikiUrls.randomMilestonesAndAwards" class="tooltip" v-i18n data-tooltip="Link opens in a new tab/window" target="_blank">&#9432;</a>
                             </label>
+
+                            <!-- Only reachable by importing JSON with randomMA set to MANUAL. -->
+                            <template v-if="randomMA === RandomMAOptionType.MANUAL">
+                                <label class="create-game-manual-ma">
+                                    <span v-i18n>Manual Milestones/Awards</span>
+                                </label>
+                                <div v-i18n>&#9888;&#xFE0F; Manual milestones and awards are not configurable in the UI yet.</div>
+                            </template>
 
                             <div class="create-game-page-column-row" v-if="isRandomMAEnabled">
                                 <div>
@@ -389,11 +397,6 @@
                                 </div>
                             </div>
 
-                            <div v-if="modularMA">
-                              The new Milestones and Awards are still in active development.<br>
-                              Please don't report anything unless it breaks the game.<br>
-                              These are <b>always fully random</b>.
-                            </div>
                             <template v-if="expansions.venus">
                                 <input type="checkbox" v-model="requiresVenusTrackCompletion" id="requiresVenusTrackCompletion-checkbox">
                                 <label for="requiresVenusTrackCompletion-checkbox">
@@ -401,7 +404,7 @@
                                 </label>
                             </template>
 
-                            <template v-if="randomMA !== RandomMAOptionType.NONE">
+                            <template v-if="isRandomMAEnabled">
                               <input type="checkbox" v-model="includeFanMA" id="fanMA-checkbox">
                               <label for="fanMA-checkbox">
                                   <span v-i18n>Include fan Milestones/Awards</span>
@@ -725,6 +728,7 @@ export default defineComponent({
         customCorporationsList: this.customCorporations,
         customColoniesList: this.customColonies,
         customCeos: this.customCeos,
+        customMA: this.customMA,
         customPreludes: this.customPreludes,
         bannedCards: this.bannedCards,
         includedCards: this.includedCards,
@@ -797,8 +801,8 @@ export default defineComponent({
     getPlayers(): Array<NewPlayerModel> {
       return this.players.slice(0, this.playersCount);
     },
-    isRandomMAEnabled(): Boolean {
-      return this.randomMA !== RandomMAOptionType.NONE;
+    isRandomMAEnabled(): boolean {
+      return this.randomMA === RandomMAOptionType.LIMITED || this.randomMA === RandomMAOptionType.UNLIMITED;
     },
     isPoliticalAgendasExtensionEnabled(): Boolean {
       return this.politicalAgendasExtension !== 'Standard';
@@ -932,11 +936,13 @@ export default defineComponent({
       this.customCeos = customCeos;
     },
     randomMAToggle() {
-      if (this.randomMA === RandomMAOptionType.NONE) {
-        this.randomMA = RandomMAOptionType.LIMITED;
-      } else {
+      if (this.isRandomMAEnabled) {
         this.randomMA = RandomMAOptionType.NONE;
+      } else {
+        this.randomMA = RandomMAOptionType.LIMITED;
       }
+      // customMA is only valid with MANUAL, which this toggle always leaves.
+      this.customMA = undefined;
     },
     getRandomMaOptionType(type: 'limited' | 'full'): RandomMAOptionType {
       if (type === 'limited') {
