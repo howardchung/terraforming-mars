@@ -7,6 +7,13 @@ import {Response} from '../Response';
 import { type SQLite } from '../database/SQLite';
 import { RouteError } from './RouteError';
 
+// Collapse bot names like "Heuristic-3" or "RL-Agent_v2" to just their prefix
+function normalizePlayerName(name: string): string {
+  const bot = name.match(/^(Heuristic|RL-Agent)/);
+  if (bot) return bot[1];
+  return name.replace('Samuel Wesley Musselman', 'Sam');
+}
+
 export class ApiStats extends Handler {
   public static readonly INSTANCE = new ApiStats();
   private constructor() {
@@ -21,7 +28,7 @@ export class ApiStats extends Handler {
       const g = await db.getGame(r.game_id);
       const players = g.players.map(p => ({
         id: p.id,
-        name: p.name.replace('Samuel Wesley Musselman', 'Sam'),
+        name: normalizePlayerName(p.name),
         color: p.color,
         score: p.victoryPointsByGeneration.slice(-1)[0],
         tieBreakScore: p.victoryPointsByGeneration.slice(-1)[0] + p.megaCredits / 1000000,
