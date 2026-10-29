@@ -248,7 +248,7 @@ def run_warmstart_imitation(
     actions_t = torch.tensor(np.array(actions_list), dtype=torch.long, device=device)
 
     batch_size = 128
-    total_loss = 0.0
+    total_loss = torch.zeros((), device=device)
     updates = 0
     for _epoch in range(4):
         perm = torch.randperm(states_t.size(0), device=device)
@@ -261,10 +261,10 @@ def run_warmstart_imitation(
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-            total_loss += float(loss.item())
+            total_loss += loss.detach()
             updates += 1
 
-    return total_loss / max(1, updates)
+    return float(total_loss.item()) / max(1, updates)
 
 
 def save_metrics_json(metrics_path: str, data: Dict[str, Any]) -> None:
@@ -275,11 +275,68 @@ def save_metrics_json(metrics_path: str, data: Dict[str, Any]) -> None:
     os.replace(tmp_path, metrics_path)
 
 
+def resolve_device(requested: str = "auto", force_cpu: bool = False) -> torch.device:
+    """
+    Resolve the torch device for training.
+      - "auto": CUDA if available, otherwise CPU.
+      - "cpu", "cuda", "cuda:N", "mps": explicit selection (validated).
+    `force_cpu` (legacy --cpu flag) always wins.
+    """
+    if force_cpu:
+        return torch.device("cpu")
+    req = (requested or "auto").strip().lower()
+    if req == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    device = torch.device(req)
+    if device.type == "cuda":
+        if not torch.cuda.is_available():
+            hint = (
+                "This PyTorch build has no CUDA support; install a CUDA-enabled build"
+                if torch.version.cuda is None
+                else "Check that an NVIDIA GPU/driver is visible (nvidia-smi, CUDA_VISIBLE_DEVICES)"
+            )
+            raise RuntimeError(
+                f"Requested device '{requested}' but CUDA is not available "
+                f"(torch {torch.__version__}). {hint}, or use --device cpu."
+            )
+        idx = device.index if device.index is not None else 0
+        if idx >= torch.cuda.device_count():
+            raise RuntimeError(
+                f"Requested device '{requested}' but only {torch.cuda.device_count()} CUDA device(s) are visible."
+            )
+        device = torch.device("cuda", idx)
+    elif device.type == "mps":
+        mps = getattr(torch.backends, "mps", None)
+        if mps is None or not mps.is_available():
+            raise RuntimeError(f"Requested device '{requested}' but MPS is not available.")
+    elif device.type != "cpu":
+        raise RuntimeError(f"Unsupported device '{requested}'. Use auto, cpu, cuda, cuda:N or mps.")
+    return device
+
+
+def configure_device(device: torch.device, allow_tf32: bool = True) -> str:
+    """Apply device-specific settings and return a human-readable description."""
+    if device.type == "cuda":
+        torch.cuda.set_device(device)
+        # TF32 speeds up fp32 matmuls on Ampere+ GPUs with negligible impact on PPO training.
+        torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+        torch.backends.cudnn.allow_tf32 = allow_tf32
+        props = torch.cuda.get_device_properties(device)
+        return (
+            f"{device} ({props.name}, {props.total_memory / (1024 ** 3):.1f} GiB, "
+            f"CUDA {torch.version.cuda}, TF32={'on' if allow_tf32 else 'off'})"
+        )
+    return str(device)
+
+
 def train(args: argparse.Namespace) -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)  # no-op when CUDA is unavailable
 
-    device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
+    device = resolve_device(args.device, force_cpu=args.cpu)
+    print(f"[RL] Using device: {configure_device(device, allow_tf32=not args.no_tf32)}")
     checkpoints_dir = os.path.join(REPO_ROOT, "rl", "checkpoints")
     os.makedirs(checkpoints_dir, exist_ok=True)
 
@@ -534,13 +591,14 @@ def train(args: argparse.Namespace) -> None:
                         nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                         optimizer.step()
 
-                        p_losses.append(float(pg_loss.item()))
-                        v_losses.append(float(v_loss.item()))
-                        ent_losses.append(float(ent_loss.item()))
+                        # Keep stats on-device to avoid a host sync per minibatch on GPU.
+                        p_losses.append(pg_loss.detach())
+                        v_losses.append(v_loss.detach())
+                        ent_losses.append(ent_loss.detach())
 
-                policy_loss_val = float(np.mean(p_losses)) if p_losses else 0.0
-                value_loss_val = float(np.mean(v_losses)) if v_losses else 0.0
-                entropy_val = float(np.mean(ent_losses)) if ent_losses else 0.0
+                policy_loss_val = float(torch.stack(p_losses).mean().item()) if p_losses else 0.0
+                value_loss_val = float(torch.stack(v_losses).mean().item()) if v_losses else 0.0
+                entropy_val = float(torch.stack(ent_losses).mean().item()) if ent_losses else 0.0
 
                 batch_states.clear()
                 batch_masks.clear()
@@ -633,6 +691,7 @@ def train(args: argparse.Namespace) -> None:
                         "numWorkers": vec_bridge.num_workers,
                         "envsPerWorker": vec_bridge.envs_per_worker,
                         "parallelEnvs": vec_bridge.num_envs,
+                        "device": str(device),
                         "evalVsRandom": eval_random,
                         "evalVsHeuristic": eval_heur,
                         "history": history,
@@ -743,6 +802,7 @@ def train(args: argparse.Namespace) -> None:
                 "numWorkers": vec_bridge.num_workers,
                 "envsPerWorker": vec_bridge.envs_per_worker,
                 "parallelEnvs": vec_bridge.num_envs,
+                "device": str(device),
                 "evalVsRandom": eval_random,
                 "evalVsHeuristic": eval_heur,
                 "history": history,
@@ -772,7 +832,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bridge-mode", choices=["auto", "http", "stdio", "io"], default="stdio")
     parser.add_argument("--server-url", type=str, default="http://127.0.0.1:8080")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--cpu", action="store_true", help="Force CPU")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=os.environ.get("TM_RL_DEVICE", "auto"),
+        help="Training device: auto (CUDA if available), cpu, cuda, cuda:N, or mps. Env: TM_RL_DEVICE",
+    )
+    parser.add_argument("--no-tf32", action="store_true", help="Disable TF32 matmuls on CUDA (Ampere+)")
+    parser.add_argument("--cpu", action="store_true", help="Force CPU (overrides --device)")
     parser.add_argument("--fresh", action="store_true", help="Ignore existing checkpoints and train from scratch")
     return parser.parse_args()
 

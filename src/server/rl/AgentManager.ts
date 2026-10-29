@@ -524,6 +524,8 @@ export class AgentManager {
     warmstartSteps?: number;
     numWorkers?: number;
     envsPerWorker?: number;
+    /** Torch device for training: 'auto' (CUDA if available), 'cpu', 'cuda', 'cuda:N' or 'mps'. */
+    device?: string;
     restart?: boolean;
   } = {}): {running: boolean; pid?: number; message: string; numWorkers: number; envsPerWorker: number; parallelEnvs: number} {
     if (this.trainingProcess && this.trainingProcess.exitCode === null) {
@@ -584,6 +586,9 @@ export class AgentManager {
       '--bridge-mode',
       'stdio',
     ];
+    if (options.device !== undefined && /^(auto|cpu|mps|cuda(:\d+)?)$/.test(options.device)) {
+      args.push('--device', options.device);
+    }
 
     this.trainingLogs = [`[${new Date().toISOString()}] Starting parallel training (${numWorkers} workers × ${envsPerWorker} envs = ${parallelEnvs} parallel games): python3 ${args.join(' ')}`];
     const child = spawn('python3', args, {

@@ -319,6 +319,7 @@ export class ApiRl extends Handler {
         warmstartSteps: body.warmstartSteps,
         numWorkers: body.numWorkers,
         envsPerWorker: body.envsPerWorker,
+        device: typeof body.device === 'string' ? body.device : undefined,
         restart: Boolean(body.restart),
       });
       responses.writeJson(res, ctx, resStatus);
