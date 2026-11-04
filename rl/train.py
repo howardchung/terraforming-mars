@@ -365,7 +365,7 @@ def resolve_device(requested: str = "auto", force_cpu: bool = False) -> torch.de
         return torch.device("cpu")
     req = (requested or "auto").strip().lower()
     if req == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     device = torch.device(req)
     if device.type == "cuda":
