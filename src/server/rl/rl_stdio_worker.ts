@@ -41,7 +41,7 @@ const NOOP_DATABASE: IDatabase = {
 Database.getInstance = () => NOOP_DATABASE;
 
 import {globalInitialize} from '../globalInitialize';
-import {CompactStepObservation, RlGameEnvironment, selectHeuristicAction, StepObservation} from './RlEnvironment';
+import {CompactStepObservation, RlGameEnvironment, selectHeuristicAction, selectRusherAction, StepObservation} from './RlEnvironment';
 import {ACTION_SPACE_SIZE, STATE_DIM} from './CardIndex';
 
 globalInitialize();
@@ -63,7 +63,7 @@ function getEnv(envId: string): RlGameEnvironment {
  */
 function advanceAutoOpponent(
   env: RlGameEnvironment,
-  autoOpponent?: 'heuristic' | 'random',
+  autoOpponent?: 'heuristic' | 'random' | 'rusher',
   autoOpponentSeat: number = 1,
 ): void {
   if (!autoOpponent) {
@@ -73,7 +73,9 @@ function advanceAutoOpponent(
     const oppPlayer = env.players[autoOpponentSeat];
     const dec = env.getDecoded();
     let oppAction: number;
-    if (autoOpponent === 'heuristic') {
+    if (autoOpponent === 'rusher') {
+      oppAction = selectRusherAction(oppPlayer, dec);
+    } else if (autoOpponent === 'heuristic') {
       oppAction = selectHeuristicAction(oppPlayer, dec);
     } else {
       const legal: Array<number> = [];
@@ -92,7 +94,7 @@ function observe(env: RlGameEnvironment, compact: boolean): StepObservation | Co
 
 function doReset(
   env: RlGameEnvironment,
-  item: {seed?: number; playerNames?: [string, string]; autoOpponent?: 'heuristic' | 'random'; autoOpponentSeat?: number},
+  item: {seed?: number; playerNames?: [string, string]; autoOpponent?: 'heuristic' | 'random' | 'rusher'; autoOpponentSeat?: number},
   compact: boolean,
 ) {
   env.resetGame(item.seed, item.playerNames);
@@ -104,7 +106,7 @@ function doReset(
 function doStep(
   env: RlGameEnvironment,
   action: number,
-  autoOpponent: 'heuristic' | 'random' | undefined,
+  autoOpponent: 'heuristic' | 'random' | 'rusher' | undefined,
   autoOpponentSeat: number,
   compact: boolean,
 ) {

@@ -14,6 +14,11 @@ import {
   PlayerStagingState,
   buildDefaultInputResponse,
 } from './ActionCodec';
+import {SpaceBonus} from '../../common/boards/SpaceBonus';
+import {CardName} from '../../common/cards/CardName';
+import {Tag} from '../../common/cards/Tag';
+import {TileType} from '../../common/TileType';
+import {ICard} from '../cards/ICard';
 import {
   ACTION_CONFIRM_SELECTION,
   ACTION_CONVERT_HEAT,
@@ -24,13 +29,19 @@ import {
   ACTION_OFFSET_CARD,
   ACTION_OFFSET_CORP_ACTION,
   ACTION_OFFSET_MILESTONE,
+  ACTION_OFFSET_RESOURCE,
   ACTION_OFFSET_SPACE,
   ACTION_OFFSET_STD_PROJECT,
   ACTION_PASS,
+  ALL_CANONICAL_CARDS,
+  CANONICAL_CARDS_BY_NAME,
+  CANONICAL_CORP_CARDS,
+  CANONICAL_PROJECT_CARDS,
   NUM_AWARDS,
   NUM_BOARD_SPACES,
   NUM_CORP_CARDS,
   NUM_MILESTONES,
+  NUM_PRELUDE_CARDS,
   NUM_PROJECT_CARDS,
   NUM_STANDARD_PROJECTS,
   NUM_TOTAL_CARDS,
@@ -435,7 +446,10 @@ export class RlGameEnvironment {
  * 7. Standard Projects (Greenery/Aquifer/Asteroid when rich)
  * 8. Passing / Ending Turn only when no high-value actions remain
  */
-export function selectHeuristicAction(player: IPlayer, decoded: DecodedActionSpace): number {
+export function scoreHeuristicActions(
+  player: IPlayer,
+  decoded: DecodedActionSpace,
+): Array<{actionIndex: number; score: number}> {
   const legal: Array<number> = [];
   for (let i = 0; i < decoded.mask.length; i++) {
     if (decoded.mask[i]) {
@@ -443,15 +457,10 @@ export function selectHeuristicAction(player: IPlayer, decoded: DecodedActionSpa
     }
   }
   if (legal.length === 0) {
-    return 0;
-  }
-  if (legal.length === 1) {
-    return legal[0];
+    return [];
   }
 
-  let bestIdx = legal[0];
-  let bestScore = -1e9;
-
+  const results: Array<{actionIndex: number; score: number}> = [];
   for (const aIdx of legal) {
     let score = Math.random() * 0.25; // slight tie-breaking noise
 
@@ -515,11 +524,310 @@ export function selectHeuristicAction(player: IPlayer, decoded: DecodedActionSpa
       score += 30.0;
     }
 
-    if (score > bestScore) {
-      bestScore = score;
-      bestIdx = aIdx;
-    }
+    results.push({actionIndex: aIdx, score});
   }
 
-  return bestIdx;
+  results.sort((a, b) => b.score - a.score);
+  return results;
+}
+
+export function selectHeuristicAction(player: IPlayer, decoded: DecodedActionSpace): number {
+  const scored = scoreHeuristicActions(player, decoded);
+  if (scored.length === 0) {
+    return 0;
+  }
+  return scored[0].actionIndex;
+}
+
+export interface CardTerraformProfile {
+  directTerraform: boolean;
+  tr: boolean;
+  heatOrPlant: boolean;
+}
+
+export function getCardTerraformProfile(cardName: CardName, cardObj?: ICard): CardTerraformProfile {
+  const card = cardObj ?? CANONICAL_CARDS_BY_NAME.get(cardName);
+  let directTerraform = false;
+  let trBonus = false;
+  let heatOrPlant = false;
+
+  if (card) {
+    const props = (card as any).properties ?? {};
+    const b = props.behavior ?? (card as any).behavior;
+    const a = props.action ?? (card as any).action;
+    const tr = props.tr ?? (card as any).tr;
+    const tags: ReadonlyArray<Tag> = card.tags ?? [];
+    const tilesBuilt: ReadonlyArray<TileType> = props.tilesBuilt ?? (card as any).tilesBuilt ?? [];
+
+    directTerraform = Boolean(
+      b?.global?.temperature ||
+      b?.global?.oxygen ||
+      b?.ocean ||
+      b?.greenery ||
+      a?.global?.temperature ||
+      a?.global?.oxygen ||
+      a?.ocean ||
+      a?.greenery ||
+      b?.tile?.type === TileType.GREENERY ||
+      b?.tile?.type === TileType.OCEAN ||
+      tilesBuilt.includes(TileType.GREENERY) ||
+      tilesBuilt.includes(TileType.OCEAN),
+    );
+
+    trBonus = Boolean(
+      tr !== undefined ||
+      b?.tr !== undefined ||
+      a?.tr !== undefined,
+    );
+
+    heatOrPlant = Boolean(
+      b?.production?.heat ||
+      b?.production?.plants ||
+      b?.stock?.heat ||
+      b?.stock?.plants ||
+      a?.production?.heat ||
+      a?.production?.plants ||
+      a?.stock?.heat ||
+      a?.stock?.plants ||
+      tags.includes(Tag.PLANT) ||
+      tags.includes(Tag.POWER),
+    );
+  }
+
+  const nameLower = cardName.toLowerCase();
+  if (
+    nameLower.includes('asteroid') ||
+    nameLower.includes('comet') ||
+    nameLower.includes('aquifer') ||
+    nameLower.includes('melt') ||
+    nameLower.includes('moss') ||
+    nameLower.includes('trees') ||
+    nameLower.includes('grass') ||
+    nameLower.includes('forest')
+  ) {
+    directTerraform = true;
+  }
+  if (
+    nameLower.includes('mohole') ||
+    nameLower.includes('geothermal') ||
+    nameLower.includes('generator') ||
+    nameLower.includes('greenhouse')
+  ) {
+    heatOrPlant = true;
+  }
+
+  return {directTerraform, tr: trBonus, heatOrPlant};
+}
+
+/**
+ * Rusher Policy Heuristic:
+ * Aggressively prioritizes increasing Terraform Rating (TR) and ending the game quickly:
+ * 1. Convert Plants into Greenery (+1 Oxygen -> +1 TR, tile VP, advances end)
+ * 2. Convert Heat into Temperature (+1 Temp -> +1 TR, advances end)
+ * 3. Board space tile placement (greenery / ocean / etc.)
+ * 4. Claim Milestones (Terraformer, Gardener)
+ * 5. Standard Projects that raise global parameters (Asteroid, Aquifer, Greenery)
+ * 6. Blue card actions and cards that directly terraform or grant TR / heat / plants
+ * 7. Fast passing / ending turns to advance generations rather than buying engine cards
+ */
+export function scoreRusherActions(
+  player: IPlayer,
+  decoded: DecodedActionSpace,
+): Array<{actionIndex: number; score: number}> {
+  const legal: Array<number> = [];
+  for (let i = 0; i < decoded.mask.length; i++) {
+    if (decoded.mask[i]) {
+      legal.push(i);
+    }
+  }
+  if (legal.length === 0) {
+    return [];
+  }
+
+  const oxy = player.game.getOxygenLevel();
+  const temp = player.game.getTemperature();
+  const oceans = player.game.board.getOceanSpaces().length;
+  const maxOxy = player.game.max.oxygen;
+  const maxTemp = player.game.max.temperature;
+  const maxOceans = player.game.max.oceans;
+
+  const oxyOpen = oxy < maxOxy;
+  const tempOpen = temp < maxTemp;
+  const oceanOpen = oceans < maxOceans;
+  const totalRemSteps = Math.max(0, (maxOxy - oxy) + Math.ceil((maxTemp - temp) / 2) + (maxOceans - oceans));
+
+  const results: Array<{actionIndex: number; score: number}> = [];
+  for (const aIdx of legal) {
+    let score = Math.random() * 0.25;
+
+    // 1. Plant conversion (8 plants -> Greenery)
+    if (aIdx === ACTION_CONVERT_PLANTS) {
+      score += oxyOpen ? 165.0 : 80.0;
+    }
+    // 2. Heat conversion (8 heat -> Temp)
+    else if (aIdx === ACTION_CONVERT_HEAT) {
+      score += tempOpen ? 165.0 : 20.0;
+    }
+    // 3. Tile placement on board space
+    else if (aIdx >= ACTION_OFFSET_SPACE && aIdx < ACTION_OFFSET_SPACE + NUM_BOARD_SPACES) {
+      const sOff = aIdx - ACTION_OFFSET_SPACE;
+      const space = player.game.board.spaces[sOff];
+      const bonusScore = (space?.bonus.length ?? 0) * 3.0;
+      let placementScore = 155.0 + bonusScore;
+      if (space?.bonus.some((b) => b === SpaceBonus.PLANT || b === SpaceBonus.HEAT || b === SpaceBonus.OCEAN)) {
+        placementScore += 6.0;
+      }
+      score += placementScore;
+    }
+    // 4. Claim Milestone (e.g. Terraformer, Gardener)
+    else if (aIdx >= ACTION_OFFSET_MILESTONE && aIdx < ACTION_OFFSET_MILESTONE + NUM_MILESTONES) {
+      score += 135.0;
+    }
+    // 5. Standard Projects
+    else if (aIdx >= ACTION_OFFSET_STD_PROJECT && aIdx < ACTION_OFFSET_STD_PROJECT + NUM_STANDARD_PROJECTS) {
+      const spOff = aIdx - ACTION_OFFSET_STD_PROJECT;
+      // SP 4: Asteroid (14 MC, +1 Temp, +1 TR)
+      if (spOff === 4) {
+        score += tempOpen ? 130.0 : 0.0;
+      }
+      // SP 0: Aquifer (18 MC, +1 Ocean, +1 TR)
+      else if (spOff === 0) {
+        score += oceanOpen ? 125.0 : 0.0;
+      }
+      // SP 3: Greenery (23 MC, +1 Greenery, +1 Oxygen, +1 TR)
+      else if (spOff === 3) {
+        score += oxyOpen ? 115.0 : 35.0;
+      }
+      // SP 2: Power Plant (11 MC, +1 energy prod)
+      else if (spOff === 2) {
+        score += (tempOpen && totalRemSteps > 3) ? 45.0 : 20.0;
+      }
+      // SP 1: City (25 MC, 0 TR, no terraforming)
+      else if (spOff === 1) {
+        score += 10.0;
+      }
+      // SP 5: Sell Patents
+      else if (spOff === 5) {
+        score += -15.0;
+      } else {
+        score += 20.0;
+      }
+    }
+    // 6. Blue card actions & corp actions
+    else if (
+      (aIdx >= ACTION_OFFSET_BLUE_PROJECT && aIdx < ACTION_OFFSET_BLUE_PROJECT + NUM_PROJECT_CARDS) ||
+      (aIdx >= ACTION_OFFSET_CORP_ACTION && aIdx < ACTION_OFFSET_CORP_ACTION + NUM_CORP_CARDS)
+    ) {
+      let cardName: CardName | undefined;
+      if (aIdx >= ACTION_OFFSET_BLUE_PROJECT && aIdx < ACTION_OFFSET_BLUE_PROJECT + NUM_PROJECT_CARDS) {
+        cardName = CANONICAL_PROJECT_CARDS[aIdx - ACTION_OFFSET_BLUE_PROJECT];
+      } else {
+        cardName = CANONICAL_CORP_CARDS[aIdx - ACTION_OFFSET_CORP_ACTION];
+      }
+      const profile = cardName ? getCardTerraformProfile(cardName) : undefined;
+      if (profile?.directTerraform || profile?.tr || profile?.heatOrPlant) {
+        score += 120.0;
+      } else {
+        score += 60.0;
+      }
+    }
+    // 7. Cards (Play or Buy)
+    else if (aIdx >= ACTION_OFFSET_CARD && aIdx < ACTION_OFFSET_CARD + NUM_TOTAL_CARDS) {
+      const cIdx = aIdx - ACTION_OFFSET_CARD;
+      const cardName = ALL_CANONICAL_CARDS[cIdx];
+      const profile = getCardTerraformProfile(cardName);
+      const isInitialOrBuy =
+        decoded.promptTitle.includes('Initial') ||
+        decoded.promptTitle.toLowerCase().includes('buy') ||
+        decoded.mask[ACTION_CONFIRM_SELECTION];
+
+      if (isInitialOrBuy) {
+        if (cIdx < NUM_CORP_CARDS) {
+          // Corp selection: prefer Ecoline (greenery for 7 plants), Helion (heat as MC), etc.
+          if (cardName === CardName.ECOLINE || cardName === CardName.HELION) {
+            score += 150.0;
+          } else if (profile.directTerraform || profile.heatOrPlant || profile.tr) {
+            score += 120.0;
+          } else {
+            score += 80.0;
+          }
+        } else if (cIdx < NUM_CORP_CARDS + NUM_PRELUDE_CARDS) {
+          // Prelude selection: prefer terraforming / heat / plant preludes
+          if (profile.directTerraform || profile.tr) {
+            score += 145.0;
+          } else if (profile.heatOrPlant) {
+            score += 130.0;
+          } else {
+            score += 85.0;
+          }
+        } else {
+          // Research phase buying project cards: buy lean!
+          const currentHand = player.cardsInHand.length;
+          if (profile.directTerraform || profile.tr) {
+            score += currentHand < 4 ? 75.0 : 30.0;
+          } else if (profile.heatOrPlant) {
+            score += currentHand < 3 ? 55.0 : 20.0;
+          } else {
+            score += 5.0; // Avoid buying engine cards
+          }
+        }
+      } else {
+        // Playing a card from hand
+        if (profile.directTerraform || profile.tr) {
+          score += 135.0;
+        } else if (profile.heatOrPlant) {
+          score += 100.0;
+        } else {
+          score += 40.0;
+        }
+      }
+    }
+    // 8. Awards
+    else if (aIdx >= ACTION_OFFSET_AWARD && aIdx < ACTION_OFFSET_AWARD + NUM_AWARDS) {
+      if (totalRemSteps <= 4 && player.megaCredits >= 25) {
+        score += 50.0;
+      } else {
+        score += 2.0;
+      }
+    }
+    // 9. Confirm Selection
+    else if (aIdx === ACTION_CONFIRM_SELECTION) {
+      score += 45.0;
+    }
+    // 10. Resource Selection (favor heat / plants)
+    else if (aIdx >= ACTION_OFFSET_RESOURCE && aIdx < ACTION_OFFSET_RESOURCE + 6) {
+      const rOff = aIdx - ACTION_OFFSET_RESOURCE;
+      // 0: MC, 1: Steel, 2: Titanium, 3: Plants, 4: Energy, 5: Heat
+      if (rOff === 3 || rOff === 5) {
+        score += 75.0; // Plants or Heat
+      } else if (rOff === 4) {
+        score += 60.0; // Energy
+      } else if (rOff === 0) {
+        score += 55.0; // MC
+      } else {
+        score += 45.0;
+      }
+    }
+    // 11. End turn / Pass
+    else if (aIdx === ACTION_END_TURN) {
+      score += 28.0;
+    } else if (aIdx === ACTION_PASS) {
+      score += 8.0;
+    } else {
+      score += 30.0;
+    }
+
+    results.push({actionIndex: aIdx, score});
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  return results;
+}
+
+export function selectRusherAction(player: IPlayer, decoded: DecodedActionSpace): number {
+  const scored = scoreRusherActions(player, decoded);
+  if (scored.length === 0) {
+    return 0;
+  }
+  return scored[0].actionIndex;
 }

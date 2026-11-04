@@ -13,10 +13,37 @@ import {
   PlayerStagingState,
 } from './ActionCodec';
 import {PolicyNetwork, SerializedModelWeights} from './PolicyNetwork';
-import {RlGameEnvironment, selectHeuristicAction, StepObservation} from './RlEnvironment';
+import {RlGameEnvironment, scoreHeuristicActions, scoreRusherActions, StepObservation} from './RlEnvironment';
 import {encodeGameState} from './StateEncoder';
 
-export type AgentPolicyType = 'rl' | 'heuristic' | 'random';
+export type AgentPolicyType = 'rl' | 'heuristic' | 'random' | 'rusher';
+
+export interface AiCandidateAction {
+  actionIndex: number;
+  label: string;
+  probability: number;
+  score?: number;
+  isChosen?: boolean;
+}
+
+export interface AiDecisionRecord {
+  step: number;
+  turn: number;
+  generation: number;
+  timestamp: number;
+  playerId: string;
+  playerName: string;
+  playerColor: string;
+  policyType: AgentPolicyType;
+  promptTitle: string;
+  chosenLabel: string;
+  chosenAction: number;
+  probability: number;
+  valueEstimate: number;
+  winProbability: number;
+  topCandidates: Array<{label: string; probability: number}>;
+  availableMoves: Array<AiCandidateAction>;
+}
 
 export interface ManagedGameAiConfig {
   game: IGame;
@@ -29,19 +56,9 @@ export interface ManagedGameAiConfig {
   delayMs: number;
   createdAt: number;
   lastStepAt: number;
-  lastDecision?: {
-    playerName: string;
-    playerColor: string;
-    policyType: AgentPolicyType;
-    promptTitle: string;
-    chosenLabel: string;
-    probability: number;
-    valueEstimate: number;
-    winProbability: number;
-    topCandidates: Array<{label: string; probability: number}>;
-    generation: number;
-    timestamp: number;
-  };
+  stepCounter?: number;
+  lastDecision?: AiDecisionRecord;
+  decisionHistory?: Array<AiDecisionRecord>;
 }
 
 export interface GameSummaryForUi {
@@ -68,7 +85,8 @@ export interface GameSummaryForUi {
     valueEstimate?: number;
     winProbability?: number;
   }>;
-  lastDecision?: ManagedGameAiConfig['lastDecision'];
+  lastDecision?: AiDecisionRecord;
+  decisionHistory?: Array<AiDecisionRecord>;
 }
 
 export class AgentManager {
@@ -176,6 +194,9 @@ export class AgentManager {
     if (lower.startsWith('[heuristic]') || lower.startsWith('heuristic-ai')) {
       return 'heuristic';
     }
+    if (lower.startsWith('[rusher]') || lower.startsWith('rusher') || lower.includes('rusher')) {
+      return 'rusher';
+    }
     if (lower.startsWith('[random]') || lower.startsWith('random-ai')) {
       return 'random';
     }
@@ -268,6 +289,7 @@ export class AgentManager {
       let probability = 1.0;
       let valueEstimate = 0.0;
       let topCandidates: Array<{label: string; probability: number}> = [];
+      let availableMoves: Array<AiCandidateAction> = [];
 
       if (policyType === 'rl') {
         const evalRes = this.policyNet.evaluate(stateVec, decoded.mask, 'sample', 0.65);
@@ -278,14 +300,55 @@ export class AgentManager {
           label: decoded.bindings.get(ta.actionIndex)?.label ?? `Action #${ta.actionIndex}`,
           probability: Number(ta.probability.toFixed(3)),
         }));
+        availableMoves = evalRes.allActions.map((a) => ({
+          actionIndex: a.actionIndex,
+          label: decoded.bindings.get(a.actionIndex)?.label ?? `Action #${a.actionIndex}`,
+          probability: Number((a.probability * 100).toFixed(1)),
+          score: Number(a.logit.toFixed(2)),
+          isChosen: a.actionIndex === chosenActionIdx,
+        }));
       } else if (policyType === 'heuristic') {
-        chosenActionIdx = selectHeuristicAction(targetPlayer, decoded);
+        const scored = scoreHeuristicActions(targetPlayer, decoded);
+        chosenActionIdx = scored[0]?.actionIndex ?? legalIndices[0];
         valueEstimate = this.policyNet.forwardValue(stateVec);
-        topCandidates = [{label: decoded.bindings.get(chosenActionIdx)?.label ?? 'Heuristic', probability: 1.0}];
+        topCandidates = scored.slice(0, 5).map((s) => ({
+          label: decoded.bindings.get(s.actionIndex)?.label ?? `Action #${s.actionIndex}`,
+          probability: s.actionIndex === chosenActionIdx ? 1.0 : 0.0,
+        }));
+        availableMoves = scored.map((s) => ({
+          actionIndex: s.actionIndex,
+          label: decoded.bindings.get(s.actionIndex)?.label ?? `Action #${s.actionIndex}`,
+          probability: s.actionIndex === chosenActionIdx ? 100.0 : 0.0,
+          score: Number(s.score.toFixed(1)),
+          isChosen: s.actionIndex === chosenActionIdx,
+        }));
+      } else if (policyType === 'rusher') {
+        const scored = scoreRusherActions(targetPlayer, decoded);
+        chosenActionIdx = scored[0]?.actionIndex ?? legalIndices[0];
+        valueEstimate = this.policyNet.forwardValue(stateVec);
+        topCandidates = scored.slice(0, 5).map((s) => ({
+          label: decoded.bindings.get(s.actionIndex)?.label ?? `Action #${s.actionIndex}`,
+          probability: s.actionIndex === chosenActionIdx ? 1.0 : 0.0,
+        }));
+        availableMoves = scored.map((s) => ({
+          actionIndex: s.actionIndex,
+          label: decoded.bindings.get(s.actionIndex)?.label ?? `Action #${s.actionIndex}`,
+          probability: s.actionIndex === chosenActionIdx ? 100.0 : 0.0,
+          score: Number(s.score.toFixed(1)),
+          isChosen: s.actionIndex === chosenActionIdx,
+        }));
       } else {
         chosenActionIdx = legalIndices[Math.floor(Math.random() * legalIndices.length)];
         valueEstimate = this.policyNet.forwardValue(stateVec);
+        const uniformP = Number((100 / legalIndices.length).toFixed(1));
         topCandidates = [{label: decoded.bindings.get(chosenActionIdx)?.label ?? 'Random', probability: Number((1 / legalIndices.length).toFixed(3))}];
+        availableMoves = legalIndices.map((idx) => ({
+          actionIndex: idx,
+          label: decoded.bindings.get(idx)?.label ?? `Action #${idx}`,
+          probability: uniformP,
+          score: 1.0,
+          isChosen: idx === chosenActionIdx,
+        }));
       }
 
       const binding = decoded.bindings.get(chosenActionIdx) ?? Array.from(decoded.bindings.values())[0];
@@ -293,21 +356,41 @@ export class AgentManager {
         break;
       }
 
+      for (const m of availableMoves) {
+        m.isChosen = (m.actionIndex === chosenActionIdx);
+      }
+
       const response = binding.execute();
       const winProbability = PolicyNetwork.valueToWinProbability(valueEstimate);
-      cfg.lastDecision = {
+
+      cfg.stepCounter = (cfg.stepCounter ?? 0) + 1;
+      const decisionRecord: AiDecisionRecord = {
+        step: cfg.stepCounter,
+        turn: cfg.stepCounter,
+        generation: game.generation,
+        timestamp: Date.now(),
+        playerId: targetPlayer.id,
         playerName: targetPlayer.name,
         playerColor: targetPlayer.color,
         policyType,
-        promptTitle: decoded.promptTitle,
+        promptTitle: decoded.promptTitle || 'Take Action',
         chosenLabel: binding.label,
+        chosenAction: chosenActionIdx,
         probability: Number(probability.toFixed(3)),
         valueEstimate: Number(valueEstimate.toFixed(3)),
         winProbability: Number(winProbability.toFixed(3)),
         topCandidates,
-        generation: game.generation,
-        timestamp: Date.now(),
+        availableMoves,
       };
+
+      cfg.lastDecision = decisionRecord;
+      if (!cfg.decisionHistory) {
+        cfg.decisionHistory = [];
+      }
+      cfg.decisionHistory.push(decisionRecord);
+      if (cfg.decisionHistory.length > 150) {
+        cfg.decisionHistory.shift();
+      }
       cfg.lastStepAt = Date.now();
 
       if (response !== undefined) {
@@ -483,6 +566,7 @@ export class AgentManager {
         };
       }),
       lastDecision: cfg?.lastDecision,
+      decisionHistory: cfg?.decisionHistory,
     };
   }
 

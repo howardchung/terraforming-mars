@@ -29,6 +29,7 @@ export interface PolicyEvaluationResult {
   valueEstimate: number;
   winProbability: number;
   topActions: Array<{actionIndex: number; probability: number}>;
+  allActions: Array<{actionIndex: number; probability: number; logit: number}>;
 }
 
 function decodeBase64Float32(b64: string): Float32Array {
@@ -327,6 +328,7 @@ export class PolicyNetwork {
         valueEstimate: value,
         winProbability,
         topActions: [],
+        allActions: [],
       };
     }
 
@@ -371,6 +373,7 @@ export class PolicyNetwork {
     const pairs = legalIndices.map((idx, k) => ({
       actionIndex: idx,
       probability: probs[k],
+      logit: logits[idx],
     }));
     pairs.sort((a, b) => b.probability - a.probability);
 
@@ -380,7 +383,8 @@ export class PolicyNetwork {
       logProb,
       valueEstimate: value,
       winProbability,
-      topActions: pairs.slice(0, 5),
+      topActions: pairs.slice(0, 5).map((p) => ({actionIndex: p.actionIndex, probability: p.probability})),
+      allActions: pairs,
     };
   }
 }

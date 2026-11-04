@@ -36,6 +36,7 @@
             <label>Opponent AI Policy</label>
             <select v-model="humanOpponentType" class="rl-select">
               <option value="rl">RL Agent (Masked PPO Neural Network)</option>
+              <option value="rusher">Rusher Agent (TR / Fast Terraforming)</option>
               <option value="heuristic">Heuristic Baseline Agent</option>
               <option value="random">Random Valid Action Agent</option>
             </select>
@@ -71,6 +72,7 @@
             <label>Red Player (Agent 1)</label>
             <select v-model="ai1Type" class="rl-select">
               <option value="rl">RL Agent (Masked PPO Neural Network)</option>
+              <option value="rusher">Rusher Agent (TR / Fast Terraforming)</option>
               <option value="heuristic">Heuristic Baseline Agent</option>
               <option value="random">Random Valid Action Agent</option>
             </select>
@@ -79,6 +81,7 @@
             <label>Blue Player (Agent 2)</label>
             <select v-model="ai2Type" class="rl-select">
               <option value="rl">RL Agent (Masked PPO Neural Network)</option>
+              <option value="rusher">Rusher Agent (TR / Fast Terraforming)</option>
               <option value="heuristic">Heuristic Baseline Agent</option>
               <option value="random">Random Valid Action Agent</option>
             </select>
@@ -294,8 +297,9 @@
         <div class="rl-form-field rl-field-inline">
           <label>Opponent Curriculum:</label>
           <select v-model="trainOpponent" class="rl-select rl-select--sm">
-            <option value="mixed">Mixed (Self-Play + Heuristic + Random)</option>
+            <option value="mixed">Mixed (Self-Play + Rusher + Heuristic)</option>
             <option value="self">Pure Self-Play</option>
+            <option value="rusher">Vs Rusher Agent (Fast Terraforming)</option>
             <option value="heuristic">Vs Heuristic Baseline</option>
           </select>
         </div>

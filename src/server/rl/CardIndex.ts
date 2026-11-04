@@ -4,6 +4,7 @@ import {Tag} from '../../common/cards/Tag';
 import {SpaceId} from '../../common/Types';
 import {DEFAULT_GAME_OPTIONS, GameOptions} from '../game/GameOptions';
 import {GameCards} from '../GameCards';
+import {ICard} from '../cards/ICard';
 import {SeededRandom} from '../../common/utils/Random';
 import {TharsisBoard} from '../boards/TharsisBoard';
 
@@ -85,6 +86,11 @@ export const ALL_CANONICAL_CARDS: ReadonlyArray<CardName> = [
   ...CANONICAL_PRELUDE_CARDS,
   ...CANONICAL_PROJECT_CARDS,
 ];
+
+export const CANONICAL_CARDS_BY_NAME = new Map<CardName, ICard>();
+for (const c of rlCards.getCorporationCards()) CANONICAL_CARDS_BY_NAME.set(c.name, c);
+for (const c of rlCards.getPreludeCards()) CANONICAL_CARDS_BY_NAME.set(c.name, c);
+for (const c of rlCards.getProjectCards()) CANONICAL_CARDS_BY_NAME.set(c.name, c);
 
 export const NUM_CORP_CARDS = CANONICAL_CORP_CARDS.length; // 17
 export const NUM_PRELUDE_CARDS = CANONICAL_PRELUDE_CARDS.length; // 35

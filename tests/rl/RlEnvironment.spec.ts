@@ -1,7 +1,17 @@
 import {expect} from 'chai';
-import {ACTION_SPACE_SIZE, ALL_CANONICAL_CARDS, RL_TRAINING_GAME_OPTIONS, STATE_DIM} from '../../src/server/rl/CardIndex';
-import {RlGameEnvironment, selectHeuristicAction} from '../../src/server/rl/RlEnvironment';
-import {decodeActionSpace} from '../../src/server/rl/ActionCodec';
+import {
+  ACTION_CONVERT_HEAT,
+  ACTION_CONVERT_PLANTS,
+  ACTION_END_TURN,
+  ACTION_OFFSET_STD_PROJECT,
+  ACTION_PASS,
+  ACTION_SPACE_SIZE,
+  ALL_CANONICAL_CARDS,
+  RL_TRAINING_GAME_OPTIONS,
+  STATE_DIM,
+} from '../../src/server/rl/CardIndex';
+import {RlGameEnvironment, scoreRusherActions, selectHeuristicAction, selectRusherAction} from '../../src/server/rl/RlEnvironment';
+import {decodeActionSpace, DecodedActionSpace} from '../../src/server/rl/ActionCodec';
 import {PolicyNetwork} from '../../src/server/rl/PolicyNetwork';
 import {BoardName} from '../../src/common/boards/BoardName';
 import {ApiRl} from '../../src/server/routes/ApiRl';
@@ -119,5 +129,70 @@ describe('RL Framework (Tharsis 2P Base + Corporate Era + Preludes)', function()
     expect(getData.aiState.lastDecision.winProbability).to.be.a('number');
     expect(getData.aiState.players[0].winProbability).to.be.a('number');
     expect(getData.aiState.players[0].winProbability).to.be.within(0, 1);
+    expect(getData.aiState.decisionHistory).to.be.an('array');
+    expect(getData.aiState.decisionHistory.length).to.be.greaterThan(0);
+    const firstDecision = getData.aiState.decisionHistory[0];
+    expect(firstDecision.chosenLabel).to.be.a('string');
+    expect(firstDecision.availableMoves).to.be.an('array');
+    expect(firstDecision.availableMoves.length).to.be.greaterThan(0);
+    expect(firstDecision.availableMoves[0].label).to.be.a('string');
+    expect(firstDecision.availableMoves[0].score).to.be.a('number');
+    expect(firstDecision.availableMoves[0].probability).to.be.a('number');
+  });
+
+  it('evaluates Rusher agent scoring and prioritizes terraforming actions', () => {
+    const env = new RlGameEnvironment('test_rusher_eval', false);
+    env.resetGame(123, ['Rusher-Red', 'Rusher-Blue']);
+    const player = env.players[0];
+
+    const mockMask = new Array(ACTION_SPACE_SIZE).fill(false);
+    mockMask[ACTION_CONVERT_PLANTS] = true;
+    mockMask[ACTION_CONVERT_HEAT] = true;
+    mockMask[ACTION_OFFSET_STD_PROJECT + 4] = true; // Asteroid
+    mockMask[ACTION_OFFSET_STD_PROJECT + 1] = true; // City
+    mockMask[ACTION_END_TURN] = true;
+    mockMask[ACTION_PASS] = true;
+
+    const mockDecoded: DecodedActionSpace = {
+      mask: mockMask,
+      bindings: new Map(),
+      promptTitle: 'Take Action',
+    };
+
+    const scored = scoreRusherActions(player, mockDecoded);
+    expect(scored.length).to.eq(6);
+
+    // Heat and plant conversion should be top scores (> 160)
+    const plantScore = scored.find((s) => s.actionIndex === ACTION_CONVERT_PLANTS)!.score;
+    const heatScore = scored.find((s) => s.actionIndex === ACTION_CONVERT_HEAT)!.score;
+    const asteroidScore = scored.find((s) => s.actionIndex === ACTION_OFFSET_STD_PROJECT + 4)!.score;
+    const cityScore = scored.find((s) => s.actionIndex === ACTION_OFFSET_STD_PROJECT + 1)!.score;
+    const endTurnScore = scored.find((s) => s.actionIndex === ACTION_END_TURN)!.score;
+
+    expect(plantScore).to.be.greaterThan(160);
+    expect(heatScore).to.be.greaterThan(160);
+    expect(asteroidScore).to.be.greaterThan(120);
+    expect(cityScore).to.be.lessThan(20);
+    expect(endTurnScore).to.be.lessThan(40);
+    expect(asteroidScore).to.be.greaterThan(cityScore);
+
+    const chosen = selectRusherAction(player, mockDecoded);
+    expect([ACTION_CONVERT_PLANTS, ACTION_CONVERT_HEAT]).to.include(chosen);
+  });
+
+  it('runs game steps with rusher policy', () => {
+    const env = new RlGameEnvironment('test_rusher_run', false);
+    env.resetGame(777, ['Rusher-P1', 'Rusher-P2']);
+
+    let steps = 0;
+    while (!env.isDone() && steps < 50) {
+      steps++;
+      const activeIdx = env.getActivePlayerIndex();
+      const dec = env.getDecoded();
+      const action = selectRusherAction(env.players[activeIdx], dec);
+      env.applyAction(action);
+      expect(env.getActivePlayerIndex()).to.be.oneOf([0, 1]);
+    }
+    expect(steps).to.be.greaterThan(0);
   });
 });

@@ -11,7 +11,7 @@ import {
   STATE_DIM,
 } from '../rl/CardIndex';
 import {decodeActionSpace} from '../rl/ActionCodec';
-import {selectHeuristicAction} from '../rl/RlEnvironment';
+import {selectHeuristicAction, selectRusherAction} from '../rl/RlEnvironment';
 import {Game} from '../Game';
 import {IGame} from '../IGame';
 import {Player} from '../Player';
@@ -60,11 +60,13 @@ function buildAiStateForGame(game: IGame, manager: AgentManager) {
     aiPlayers: aiPlayersMap,
     lastDecision: cfg?.lastDecision ? {
       timestamp: cfg.lastDecision.timestamp,
-      playerId: '',
+      step: cfg.lastDecision.step,
+      playerId: cfg.lastDecision.playerId,
       playerName: cfg.lastDecision.playerName,
       playerColor: cfg.lastDecision.playerColor,
       agentType: cfg.lastDecision.policyType,
-      chosenAction: -1,
+      promptTitle: cfg.lastDecision.promptTitle,
+      chosenAction: cfg.lastDecision.chosenAction,
       chosenLabel: cfg.lastDecision.chosenLabel,
       valueEstimate: cfg.lastDecision.valueEstimate,
       winProbability: cfg.lastDecision.winProbability,
@@ -73,7 +75,25 @@ function buildAiStateForGame(game: IGame, manager: AgentManager) {
         label: tc.label,
         probability: tc.probability,
       })),
+      availableMoves: cfg.lastDecision.availableMoves,
     } : null,
+    decisionHistory: cfg?.decisionHistory ? cfg.decisionHistory.map((d) => ({
+      step: d.step,
+      turn: d.turn,
+      generation: d.generation,
+      timestamp: d.timestamp,
+      playerId: d.playerId,
+      playerName: d.playerName,
+      playerColor: d.playerColor,
+      agentType: d.policyType,
+      promptTitle: d.promptTitle,
+      chosenAction: d.chosenAction,
+      chosenLabel: d.chosenLabel,
+      valueEstimate: d.valueEstimate,
+      winProbability: d.winProbability,
+      topCandidates: d.topCandidates,
+      availableMoves: d.availableMoves,
+    })) : [],
     playerHands,
     players: summary.players.map((p) => ({
       id: p.id,
@@ -223,7 +243,9 @@ export class ApiRl extends Handler {
             'RL-Agent (PPO)' :
             ai1Policy === 'heuristic' ?
               'Heuristic-AI' :
-              'Random-AI';
+              ai1Policy === 'rusher' ?
+                'Rusher-AI' :
+                'Random-AI';
         p1 = new Player(humanName, 'red', false, 0, p1Id);
         p2 = new Player(aiLabel, 'blue', false, 0, p2Id);
         aiConfigs.push({playerId: p2Id, policyType: ai1Policy});
@@ -233,13 +255,17 @@ export class ApiRl extends Handler {
             'RL-Agent-Alpha' :
             ai1Policy === 'heuristic' ?
               'Heuristic-Alpha' :
-              'Random-Alpha';
+              ai1Policy === 'rusher' ?
+                'Rusher-Alpha' :
+                'Random-Alpha';
         const label2 =
           ai2Policy === 'rl' ?
             'RL-Agent-Beta' :
             ai2Policy === 'heuristic' ?
               'Heuristic-Beta' :
-              'Random-Beta';
+              ai2Policy === 'rusher' ?
+                'Rusher-Beta' :
+                'Random-Beta';
         p1 = new Player(label1, 'red', false, 0, p1Id);
         p2 = new Player(label2, 'blue', false, 0, p2Id);
         aiConfigs.push({playerId: p1Id, policyType: ai1Policy});
@@ -370,11 +396,23 @@ export class ApiRl extends Handler {
       return;
     }
 
+    if (action === 'env_rusher') {
+      const envId = String(body.envId ?? 'env_0');
+      const env = manager.getOrCreateTrainingEnv(envId);
+      const pIdx = env.getActivePlayerIndex();
+      const player = env.players[pIdx];
+      const staging = env.stagings[pIdx];
+      const decoded = decodeActionSpace(player, staging);
+      const actIdx = selectRusherAction(player, decoded);
+      responses.writeJson(res, ctx, {ok: true, action: actIdx});
+      return;
+    }
+
     if (action === 'env_batch_step') {
       const items: Array<{
         envId: string;
         action: number;
-        autoOpponent?: 'heuristic' | 'random';
+        autoOpponent?: 'heuristic' | 'random' | 'rusher';
       }> = body.items ?? [];
       const results = items.map((item) => {
         const env = manager.getOrCreateTrainingEnv(item.envId);
@@ -384,9 +422,11 @@ export class ApiRl extends Handler {
           const st1 = env.stagings[1];
           const dec1 = decodeActionSpace(p1, st1);
           const oppAction =
-            item.autoOpponent === 'heuristic' ?
-              selectHeuristicAction(p1, dec1) :
-              obs.legalActionIndices[Math.floor(Math.random() * obs.legalActionIndices.length)];
+            item.autoOpponent === 'rusher' ?
+              selectRusherAction(p1, dec1) :
+              item.autoOpponent === 'heuristic' ?
+                selectHeuristicAction(p1, dec1) :
+                obs.legalActionIndices[Math.floor(Math.random() * obs.legalActionIndices.length)];
           obs = env.step(oppAction);
         }
         if (obs.done && body.autoReset) {

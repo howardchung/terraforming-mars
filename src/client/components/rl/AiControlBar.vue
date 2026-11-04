@@ -63,6 +63,15 @@
         </button>
 
         <button
+          class="btn btn-sm btn-info"
+          :class="{ 'btn-active': showHistoryModal }"
+          @click="toggleHistoryModal"
+          title="View history of all AI decisions and candidate move scores"
+        >
+          📜 Decision History ({{ decisionHistory.length }})
+        </button>
+
+        <button
           v-if="isSpectator && hasPlayerHands"
           class="btn btn-sm"
           @click="showHands = !showHands"
@@ -111,47 +120,295 @@
     </div>
 
     <!-- Neural Network Decision Inspector -->
-    <div v-if="showInspector && lastDecision" class="rl-ai-inspector">
+    <div v-if="showInspector && displayedDecision" class="rl-ai-inspector">
       <div class="rl-inspector-header">
-        <div>
-          <strong>Last AI Move:</strong>
-          <span class="rl-decision-player" :class="'player_bg_color_' + lastDecision.playerColor">
-            {{ lastDecision.playerName }}
+        <div class="rl-inspector-title-area">
+          <span class="rl-turn-badge" v-if="displayedDecision.step">
+            Turn #{{ displayedDecision.step }} (Gen {{ displayedDecision.generation }})
+          </span>
+          <span v-if="selectedHistoryIndex >= 0" class="rl-historical-tag">
+            📜 Viewing Past Turn
+          </span>
+          <span v-else class="rl-live-tag">
+            🔴 Live Move
+          </span>
+          <span class="rl-decision-player" :class="'player_bg_color_' + displayedDecision.playerColor">
+            {{ displayedDecision.playerName }}
           </span>
           chose
-          <span class="rl-chosen-action">{{ lastDecision.chosenLabel }}</span>
+          <span class="rl-chosen-action">{{ displayedDecision.chosenLabel }}</span>
         </div>
+
+        <div class="rl-inspector-nav-group">
+          <!-- Step back/forward across turns -->
+          <div class="rl-turn-nav" v-if="decisionHistory.length > 1">
+            <button
+              class="btn btn-xs"
+              :disabled="selectedHistoryIndex === 0"
+              @click="prevDecision"
+              title="Previous Turn"
+            >
+              ◀ Prev
+            </button>
+            <span class="rl-turn-nav-label">
+              {{ selectedHistoryIndex >= 0 ? (selectedHistoryIndex + 1) + ' / ' + decisionHistory.length : 'Latest (' + decisionHistory.length + ')' }}
+            </span>
+            <button
+              class="btn btn-xs"
+              :disabled="selectedHistoryIndex < 0 || selectedHistoryIndex === decisionHistory.length - 1"
+              @click="nextDecision"
+              title="Next Turn"
+            >
+              Next ▶
+            </button>
+            <button
+              v-if="selectedHistoryIndex >= 0"
+              class="btn btn-xs btn-outline"
+              @click="selectLatestDecision"
+              title="Return to latest turn"
+            >
+              Live ⏭
+            </button>
+          </div>
+
+          <button
+            class="btn btn-xs btn-info rl-full-history-btn"
+            @click="toggleHistoryModal"
+            title="Open Full Move History & Score Breakdown"
+          >
+            📜 All Moves ({{ displayedAvailableMoves.length }})
+          </button>
+        </div>
+
         <div class="rl-value-readout">
-          <span class="rl-value-label">Est. Chance of Winning:</span>
+          <span class="rl-value-label">Est. Win:</span>
           <span
             class="rl-value-number"
-            :class="getDecisionWinProb(lastDecision) >= 0.5 ? 'rl-val-pos' : 'rl-val-neg'"
+            :class="getDecisionWinProb(displayedDecision) >= 0.5 ? 'rl-val-pos' : 'rl-val-neg'"
           >
-            {{ formatWinPercent(getDecisionWinProb(lastDecision)) }}
+            {{ formatWinPercent(getDecisionWinProb(displayedDecision)) }}
           </span>
           <span class="rl-win-prob">
-            (Critic V(s): {{ formatSigned(lastDecision.valueEstimate) }})
+            (Critic V: {{ formatSigned(displayedDecision.valueEstimate) }})
           </span>
         </div>
       </div>
 
-      <div v-if="lastDecision.topCandidates && lastDecision.topCandidates.length > 0" class="rl-candidates-row">
+      <!-- Prompt Context if available -->
+      <div v-if="displayedDecision.promptTitle" class="rl-prompt-context">
+        <span class="rl-prompt-label">Prompt:</span>
+        <span class="rl-prompt-text">{{ displayedDecision.promptTitle }}</span>
+        <span class="rl-available-count">
+          ({{ displayedAvailableMoves.length }} available moves considered)
+        </span>
+      </div>
+
+      <!-- Candidate moves row -->
+      <div v-if="displayedDecision.topCandidates && displayedDecision.topCandidates.length > 0" class="rl-candidates-row">
         <div
-          v-for="cand in lastDecision.topCandidates"
+          v-for="cand in displayedDecision.topCandidates"
           :key="cand.actionIndex"
           class="rl-candidate-chip"
-          :class="{ 'rl-candidate-chip--chosen': cand.actionIndex === lastDecision.chosenAction }"
+          :class="{ 'rl-candidate-chip--chosen': cand.actionIndex === displayedDecision.chosenAction || cand.label === displayedDecision.chosenLabel }"
         >
           <div class="rl-cand-top">
             <span class="rl-cand-label">{{ cand.label }}</span>
-            <span class="rl-cand-prob">{{ (cand.probability * 100).toFixed(1) }}%</span>
+            <span class="rl-cand-prob">{{ (cand.probability * (cand.probability <= 1.0 ? 100 : 1)).toFixed(1) }}%</span>
           </div>
           <div class="rl-cand-bar-bg">
-            <div class="rl-cand-bar-fill" :style="{ width: Math.min(100, Math.max(2, cand.probability * 100)) + '%' }"></div>
+            <div class="rl-cand-bar-fill" :style="{ width: Math.min(100, Math.max(2, cand.probability * (cand.probability <= 1.0 ? 100 : 1))) + '%' }"></div>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- Full AI Decision History & Scored Move Inspector Modal -->
+    <PopupPanel v-if="showHistoryModal" class="rl-history-modal" @close="closeHistoryModal">
+      <template #header>
+        <div class="rl-history-modal-header">
+          <span class="rl-history-modal-title">
+            📜 AI Agent Decision History
+          </span>
+          <span class="rl-history-modal-subtitle" v-if="decisionHistory.length > 0">
+            ({{ decisionHistory.length }} decision{{ decisionHistory.length === 1 ? '' : 's' }} recorded)
+          </span>
+        </div>
+      </template>
+
+      <div class="rl-history-modal-content">
+        <!-- Left Column: Chronological Turn List -->
+        <div class="rl-history-timeline-col">
+          <div class="rl-history-filter-bar">
+            <label class="rl-filter-label">Filter Player:</label>
+            <select v-model="historyPlayerFilter" class="rl-history-filter-select">
+              <option value="all">All AI Players</option>
+              <option
+                v-for="p in aiPlayerBadges"
+                :key="p.id"
+                :value="p.name"
+              >
+                {{ p.name }} ({{ p.color }})
+              </option>
+            </select>
+          </div>
+
+          <div class="rl-history-list">
+            <div
+              v-for="item in filteredHistory"
+              :key="'hist-' + item.index + '-' + item.record.timestamp"
+              class="rl-history-item"
+              :class="{
+                'rl-history-item--active': item.index === selectedHistoryIndex || (selectedHistoryIndex < 0 && item.index === decisionHistory.length - 1),
+              }"
+              @click="selectDecision(item.index)"
+            >
+              <div class="rl-history-item-top">
+                <span class="rl-history-step-num">Turn #{{ item.record.step || (item.index + 1) }}</span>
+                <span class="rl-history-gen">Gen {{ item.record.generation }}</span>
+                <span class="rl-history-player-badge" :class="'player_bg_color_' + item.record.playerColor">
+                  {{ item.record.playerName }}
+                </span>
+                <span
+                  class="rl-history-win-badge"
+                  :class="getDecisionWinProb(item.record) >= 0.5 ? 'rl-val-pos' : 'rl-val-neg'"
+                >
+                  {{ formatWinPercent(getDecisionWinProb(item.record)) }}
+                </span>
+              </div>
+              <div class="rl-history-item-chosen">
+                <span class="rl-history-chosen-icon">✔</span>
+                <span class="rl-history-chosen-text">{{ item.record.chosenLabel }}</span>
+              </div>
+              <div class="rl-history-item-meta">
+                <span class="rl-history-prompt" v-if="item.record.promptTitle">{{ item.record.promptTitle }}</span>
+                <span class="rl-history-cand-count">
+                  {{ item.record.availableMoves ? item.record.availableMoves.length : item.record.topCandidates.length }} moves
+                </span>
+              </div>
+            </div>
+            <div v-if="filteredHistory.length === 0" class="rl-history-empty">
+              No decisions recorded yet.
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Move Inspector & Score Breakdown -->
+        <div class="rl-history-detail-col" v-if="displayedDecision">
+          <div class="rl-detail-header-card">
+            <div class="rl-detail-card-row">
+              <div class="rl-detail-title-group">
+                <span class="rl-detail-step-badge">
+                  Turn #{{ displayedDecision.step || (selectedHistoryIndex >= 0 ? selectedHistoryIndex + 1 : decisionHistory.length) }} (Gen {{ displayedDecision.generation }})
+                </span>
+                <span class="rl-detail-player-pill" :class="'player_bg_color_' + displayedDecision.playerColor">
+                  {{ displayedDecision.playerName }}
+                </span>
+                <span class="rl-detail-agent-type">
+                  Policy: {{ formatAgentType(displayedDecision.agentType) }}
+                </span>
+              </div>
+              <div class="rl-detail-metrics">
+                <div class="rl-detail-metric">
+                  <span class="rl-metric-label">Win Odds:</span>
+                  <span
+                    class="rl-metric-val"
+                    :class="getDecisionWinProb(displayedDecision) >= 0.5 ? 'rl-val-pos' : 'rl-val-neg'"
+                  >
+                    {{ formatWinPercent(getDecisionWinProb(displayedDecision)) }}
+                  </span>
+                </div>
+                <div class="rl-detail-metric">
+                  <span class="rl-metric-label">Critic V(s):</span>
+                  <span class="rl-metric-val font-mono">
+                    {{ formatSigned(displayedDecision.valueEstimate) }}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div class="rl-detail-chosen-banner">
+              <div class="rl-chosen-banner-label">CHOSEN ACTION:</div>
+              <div class="rl-chosen-banner-text">{{ displayedDecision.chosenLabel }}</div>
+              <div class="rl-chosen-banner-prompt" v-if="displayedDecision.promptTitle">
+                Prompt: <em>{{ displayedDecision.promptTitle }}</em>
+              </div>
+            </div>
+          </div>
+
+          <!-- All Available Moves Table / Scored Candidates -->
+          <div class="rl-detail-moves-section">
+            <div class="rl-moves-section-header">
+              <div class="rl-moves-section-title">
+                Available Moves & Scores ({{ displayedAvailableMoves.length }})
+              </div>
+              <div class="rl-moves-search">
+                <input
+                  v-model="historySearchQuery"
+                  type="text"
+                  placeholder="Filter moves..."
+                  class="rl-moves-search-input"
+                />
+              </div>
+            </div>
+
+            <div class="rl-moves-table-container">
+              <table class="rl-moves-table">
+                <thead>
+                  <tr>
+                    <th class="rl-th-rank">#</th>
+                    <th class="rl-th-label">Available Move</th>
+                    <th class="rl-th-score" title="Neural net raw logit or heuristic score">Score</th>
+                    <th class="rl-th-prob">Probability</th>
+                    <th class="rl-th-chosen">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="(move, idx) in displayedAvailableMoves"
+                    :key="move.actionIndex + '-' + idx"
+                    class="rl-move-row"
+                    :class="{ 'rl-move-row--chosen': move.isChosen || move.label === displayedDecision.chosenLabel }"
+                  >
+                    <td class="rl-td-rank">{{ idx + 1 }}</td>
+                    <td class="rl-td-label">
+                      <span class="rl-move-name">{{ move.label }}</span>
+                    </td>
+                    <td class="rl-td-score font-mono">
+                      {{ move.score !== undefined ? formatSigned(move.score) : '-' }}
+                    </td>
+                    <td class="rl-td-prob">
+                      <div class="rl-table-prob-cell">
+                        <span class="rl-prob-num font-mono">
+                          {{ move.probability !== undefined ? (move.probability > 1.0 ? move.probability.toFixed(1) : (move.probability * 100).toFixed(1)) + '%' : '-' }}
+                        </span>
+                        <div class="rl-prob-bar-track">
+                          <div
+                            class="rl-prob-bar-fill"
+                            :style="{ width: Math.min(100, Math.max(1, move.probability > 1.0 ? move.probability : move.probability * 100)) + '%' }"
+                          ></div>
+                        </div>
+                      </div>
+                    </td>
+                    <td class="rl-td-chosen">
+                      <span v-if="move.isChosen || move.label === displayedDecision.chosenLabel" class="rl-chosen-tag">
+                        ✔ CHOSEN
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-if="displayedAvailableMoves.length === 0" class="rl-moves-empty">
+                No matching moves found.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-else class="rl-history-empty-detail">
+          Select a turn from the timeline on the left to inspect its decisions and available moves.
+        </div>
+      </div>
+    </PopupPanel>
 
     <!-- Spectator Hand Inspector (reuses standard Terraforming Mars Card component) -->
     <div v-if="isSpectator && showHands && hasPlayerHands" class="rl-spectator-hands">
@@ -198,6 +455,7 @@
 <script lang="ts">
 import {defineComponent} from 'vue';
 import Card from '@/client/components/card/Card.vue';
+import PopupPanel from '@/client/components/common/PopupPanel.vue';
 import {CardModel} from '@/common/models/CardModel';
 import {CardName} from '@/common/cards/CardName';
 import {vueRoot} from '@/client/components/vueRoot';
@@ -209,17 +467,30 @@ interface TopCandidate {
   probability: number;
 }
 
+interface CandidateAction {
+  actionIndex: number;
+  label: string;
+  probability: number;
+  score?: number;
+  isChosen?: boolean;
+}
+
 interface LastDecision {
   timestamp: number;
+  step?: number;
+  turn?: number;
+  generation?: number;
   playerId: string;
   playerName: string;
   playerColor: string;
   agentType: string;
+  promptTitle?: string;
   chosenAction: number;
   chosenLabel: string;
   valueEstimate: number;
   winProbability?: number;
   topCandidates: Array<TopCandidate>;
+  availableMoves?: Array<CandidateAction>;
 }
 
 interface AiPlayerInfo {
@@ -239,6 +510,7 @@ interface AiGameState {
   delayMs: number;
   aiPlayers: Record<string, string>;
   lastDecision: LastDecision | null;
+  decisionHistory?: Array<LastDecision>;
   isTrainingGame?: boolean;
   playerHands?: Record<string, {cardsInHand: Array<CardName>; preludeCardsInHand: Array<CardName>}>;
   players: Array<AiPlayerInfo>;
@@ -248,6 +520,7 @@ export default defineComponent({
   name: 'AiControlBar',
   components: {
     Card,
+    PopupPanel,
   },
   props: {
     participantId: {
@@ -265,6 +538,10 @@ export default defineComponent({
       status: null as any,
       showInspector: true,
       showHands: false,
+      showHistoryModal: false,
+      selectedHistoryIndex: -1,
+      historyPlayerFilter: 'all',
+      historySearchQuery: '',
       pollTimer: undefined as number | undefined,
       lastSeenDecisionTimestamp: 0,
     };
@@ -288,6 +565,40 @@ export default defineComponent({
     },
     lastDecision(): LastDecision | null {
       return this.aiState?.lastDecision ?? null;
+    },
+    decisionHistory(): Array<LastDecision> {
+      return this.aiState?.decisionHistory ?? [];
+    },
+    displayedDecision(): LastDecision | null {
+      const history = this.decisionHistory;
+      if (this.selectedHistoryIndex >= 0 && this.selectedHistoryIndex < history.length) {
+        return history[this.selectedHistoryIndex];
+      }
+      return this.lastDecision;
+    },
+    filteredHistory(): Array<{index: number; record: LastDecision}> {
+      const list = this.decisionHistory.map((record, index) => ({index, record}));
+      if (this.historyPlayerFilter === 'all') {
+        return list;
+      }
+      return list.filter((item) => item.record.playerName === this.historyPlayerFilter || item.record.playerColor === this.historyPlayerFilter);
+    },
+    displayedAvailableMoves(): Array<CandidateAction> {
+      const dec = this.displayedDecision;
+      if (!dec) return [];
+      const moves: Array<CandidateAction> = dec.availableMoves && dec.availableMoves.length > 0
+        ? dec.availableMoves
+        : dec.topCandidates.map((tc) => ({
+            actionIndex: tc.actionIndex,
+            label: tc.label,
+            probability: tc.probability <= 1.0 ? tc.probability * 100 : tc.probability,
+            isChosen: tc.actionIndex === dec.chosenAction || tc.label === dec.chosenLabel,
+          }));
+      if (!this.historySearchQuery.trim()) {
+        return moves;
+      }
+      const q = this.historySearchQuery.toLowerCase();
+      return moves.filter((m) => m.label.toLowerCase().includes(q));
     },
     currentDelayPreset(): number {
       const d = this.aiState?.delayMs ?? 350;
@@ -373,6 +684,42 @@ export default defineComponent({
       if (!this.aiState) return;
       this.sendControl({paused: !this.aiState.paused});
     },
+    selectDecision(index: number) {
+      this.selectedHistoryIndex = index;
+    },
+    selectLatestDecision() {
+      this.selectedHistoryIndex = -1;
+    },
+    prevDecision() {
+      const history = this.decisionHistory;
+      if (history.length === 0) return;
+      const current = this.selectedHistoryIndex >= 0 ? this.selectedHistoryIndex : history.length - 1;
+      if (current > 0) {
+        this.selectedHistoryIndex = current - 1;
+      }
+    },
+    nextDecision() {
+      const history = this.decisionHistory;
+      if (history.length === 0) return;
+      if (this.selectedHistoryIndex >= 0) {
+        if (this.selectedHistoryIndex < history.length - 1) {
+          this.selectedHistoryIndex = this.selectedHistoryIndex + 1;
+        } else {
+          this.selectedHistoryIndex = -1;
+        }
+      }
+    },
+    toggleHistoryModal() {
+      this.showHistoryModal = !this.showHistoryModal;
+      if (this.showHistoryModal) {
+        if (this.selectedHistoryIndex < 0 && this.decisionHistory.length > 0) {
+          this.selectedHistoryIndex = this.decisionHistory.length - 1;
+        }
+      }
+    },
+    closeHistoryModal() {
+      this.showHistoryModal = false;
+    },
     stepOnce() {
       this.sendControl({stepOnce: true});
     },
@@ -399,6 +746,7 @@ export default defineComponent({
     formatAgentType(agentType: string | null): string {
       if (agentType === 'rl') return 'RL Policy';
       if (agentType === 'heuristic') return 'Heuristic';
+      if (agentType === 'rusher') return 'Rusher TR';
       if (agentType === 'random') return 'Random';
       return 'AI';
     },
@@ -736,6 +1084,525 @@ export default defineComponent({
 .rl-cand-bar-fill {
   height: 100%;
   background: linear-gradient(90deg, #ff922b, #ffd43b);
+}
+
+.btn-xs {
+  padding: 1px 6px;
+  font-size: 11px;
+  border-radius: 3px;
+}
+
+.btn-active {
+  background: #15aabf !important;
+  border-color: #22b8cf !important;
+  color: #fff !important;
+}
+
+.rl-inspector-title-area {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rl-turn-badge {
+  background: #2b1f1a;
+  border: 1px solid #c65d21;
+  color: #ffa94d;
+  font-weight: 700;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.rl-historical-tag {
+  background: #3b2c1a;
+  border: 1px solid #fab005;
+  color: #ffe066;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.rl-live-tag {
+  background: #2b1b1b;
+  border: 1px solid #ff6b6b;
+  color: #ffa8a8;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.rl-inspector-nav-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rl-turn-nav {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 2px 5px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.rl-turn-nav-label {
+  font-family: monospace;
+  font-size: 11px;
+  color: #ffd8a8;
+  padding: 0 4px;
+}
+
+.rl-full-history-btn {
+  background: #1098ad !important;
+  border-color: #15aabf !important;
+  color: #fff !important;
+}
+
+.rl-prompt-context {
+  font-size: 11px;
+  color: #ced4da;
+  margin: 4px 0 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rl-prompt-label {
+  font-weight: 700;
+  color: #ffa94d;
+}
+
+.rl-prompt-text {
+  font-style: italic;
+  color: #f1f3f5;
+}
+
+.rl-available-count {
+  color: #868e96;
+  font-size: 11px;
+}
+
+/* History Modal / Drawer Styles */
+.rl-history-modal :deep(.popup-inner) {
+  max-width: 980px;
+  width: 94vw;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: #1a1411;
+  border: 1px solid #c65d21;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.85);
+  color: #f4ece6;
+}
+
+.rl-history-modal-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.rl-history-modal-subtitle {
+  font-size: 12px;
+  color: #adb5bd;
+  font-weight: normal;
+}
+
+.rl-history-modal-content {
+  display: flex;
+  gap: 14px;
+  height: 68vh;
+  overflow: hidden;
+  padding: 2px;
+}
+
+.rl-history-timeline-col {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  padding-right: 10px;
+}
+
+.rl-history-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.rl-filter-label {
+  color: #ced4da;
+  font-size: 11px;
+}
+
+.rl-history-filter-select {
+  background: #241c18;
+  color: #fff;
+  border: 1px solid #6e4730;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
+  flex: 1;
+}
+
+.rl-history-list {
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+
+.rl-history-item {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  padding: 7px 9px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rl-history-item:hover {
+  background: rgba(255, 146, 43, 0.08);
+  border-color: rgba(255, 146, 43, 0.4);
+}
+
+.rl-history-item--active {
+  background: rgba(255, 146, 43, 0.18) !important;
+  border-color: #ff922b !important;
+  box-shadow: 0 0 6px rgba(255, 146, 43, 0.35);
+}
+
+.rl-history-item-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.rl-history-step-num {
+  font-weight: 700;
+  color: #ffa94d;
+}
+
+.rl-history-gen {
+  color: #adb5bd;
+}
+
+.rl-history-player-badge {
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.rl-history-win-badge {
+  margin-left: auto;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.rl-history-item-chosen {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f4ece6;
+  margin-bottom: 3px;
+}
+
+.rl-history-chosen-icon {
+  color: #69db7c;
+  font-size: 11px;
+}
+
+.rl-history-chosen-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rl-history-item-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #868e96;
+}
+
+.rl-history-prompt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 190px;
+}
+
+.rl-history-cand-count {
+  color: #adb5bd;
+}
+
+.rl-history-empty {
+  color: #868e96;
+  font-style: italic;
+  font-size: 12px;
+  text-align: center;
+  padding: 20px 0;
+}
+
+.rl-history-detail-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.rl-detail-header-card {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.rl-detail-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.rl-detail-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rl-detail-step-badge {
+  font-weight: 700;
+  font-size: 13px;
+  color: #ffa94d;
+}
+
+.rl-detail-player-pill {
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 11px;
+  color: #fff;
+}
+
+.rl-detail-agent-type {
+  font-size: 11px;
+  color: #adb5bd;
+}
+
+.rl-detail-metrics {
+  display: flex;
+  gap: 12px;
+}
+
+.rl-detail-metric {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.rl-metric-label {
+  color: #ced4da;
+}
+
+.rl-metric-val {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.rl-detail-chosen-banner {
+  background: rgba(43, 138, 62, 0.18);
+  border-left: 4px solid #69db7c;
+  border-radius: 0 4px 4px 0;
+  padding: 6px 10px;
+}
+
+.rl-chosen-banner-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #8ce99a;
+  letter-spacing: 0.5px;
+}
+
+.rl-chosen-banner-text {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  margin: 2px 0;
+}
+
+.rl-chosen-banner-prompt {
+  font-size: 11px;
+  color: #d8f5a2;
+}
+
+.rl-detail-moves-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.rl-moves-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+}
+
+.rl-moves-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ced4da;
+}
+
+.rl-moves-search-input {
+  background: #241c18;
+  color: #fff;
+  border: 1px solid #6e4730;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  width: 170px;
+}
+
+.rl-moves-table-container {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.rl-moves-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.rl-moves-table th {
+  background: #211915;
+  color: #ffd8a8;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.rl-moves-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.rl-move-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.rl-move-row--chosen {
+  background: rgba(43, 138, 62, 0.16) !important;
+  font-weight: 600;
+}
+
+.rl-th-rank, .rl-td-rank {
+  width: 35px;
+  text-align: center;
+  color: #adb5bd;
+}
+
+.rl-th-score, .rl-td-score {
+  width: 75px;
+}
+
+.rl-th-prob, .rl-td-prob {
+  width: 140px;
+}
+
+.rl-th-chosen, .rl-td-chosen {
+  width: 80px;
+  text-align: center;
+}
+
+.rl-table-prob-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rl-prob-num {
+  font-size: 11px;
+  color: #ffd8a8;
+  width: 42px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.rl-prob-bar-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 45px;
+}
+
+.rl-prob-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff922b, #ffd43b);
+}
+
+.rl-move-row--chosen .rl-prob-bar-fill {
+  background: linear-gradient(90deg, #2b8a3e, #69db7c);
+}
+
+.rl-chosen-tag {
+  background: #2b8a3e;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.rl-moves-empty, .rl-history-empty-detail {
+  color: #868e96;
+  font-style: italic;
+  font-size: 12px;
+  text-align: center;
+  padding: 24px 0;
 }
 
 .rl-spectator-hands {

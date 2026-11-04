@@ -52,22 +52,54 @@ class SlotState:
 
 
 def make_slot_config(ep_idx: int, opponent_arg: str) -> Tuple[bool, int, int, Optional[str], Tuple[str, str]]:
-    use_heuristic_opp = (
-        opponent_arg == "heuristic"
-        or (opponent_arg == "mixed" and (ep_idx % 2 == 1))
-    )
     rl_seat = ep_idx % 2
     opp_seat = 1 - rl_seat
-    auto_opp = "heuristic" if use_heuristic_opp else None
-    if use_heuristic_opp:
+
+    if opponent_arg == "rusher":
+        auto_opp = "rusher"
+        is_fixed_opp = True
+        p_names = (
+            ("RL-Agent (PPO)", "Rusher-AI")
+            if rl_seat == 0
+            else ("Rusher-AI", "RL-Agent (PPO)")
+        )
+    elif opponent_arg == "heuristic":
+        auto_opp = "heuristic"
+        is_fixed_opp = True
         p_names = (
             ("RL-Agent (PPO)", "Heuristic-AI")
             if rl_seat == 0
             else ("Heuristic-AI", "RL-Agent (PPO)")
         )
-    else:
+    elif opponent_arg == "mixed":
+        # Mixed rotates between pure self-play, heuristic, and rusher
+        mode = ep_idx % 3
+        if mode == 1:
+            auto_opp = "heuristic"
+            is_fixed_opp = True
+            p_names = (
+                ("RL-Agent (PPO)", "Heuristic-AI")
+                if rl_seat == 0
+                else ("Heuristic-AI", "RL-Agent (PPO)")
+            )
+        elif mode == 2:
+            auto_opp = "rusher"
+            is_fixed_opp = True
+            p_names = (
+                ("RL-Agent (PPO)", "Rusher-AI")
+                if rl_seat == 0
+                else ("Rusher-AI", "RL-Agent (PPO)")
+            )
+        else:
+            auto_opp = None
+            is_fixed_opp = False
+            p_names = ("RL-SelfPlay-Red", "RL-SelfPlay-Blue")
+    else:  # "self"
+        auto_opp = None
+        is_fixed_opp = False
         p_names = ("RL-SelfPlay-Red", "RL-SelfPlay-Blue")
-    return use_heuristic_opp, rl_seat, opp_seat, auto_opp, p_names
+
+    return is_fixed_opp, rl_seat, opp_seat, auto_opp, p_names
 
 
 def compute_gae_for_episode(
@@ -404,6 +436,7 @@ def train(args: argparse.Namespace) -> None:
     history: List[Dict[str, Any]] = []
     eval_random: Dict[str, Any] = {}
     eval_heur: Dict[str, Any] = {}
+    eval_rush: Dict[str, Any] = {}
 
     if os.path.exists(metrics_path) and not args.fresh:
         try:
@@ -415,6 +448,7 @@ def train(args: argparse.Namespace) -> None:
                 best_score = float(prev_metrics.get("bestScore", -1e9))
                 eval_random = prev_metrics.get("evalVsRandom", {}) or {}
                 eval_heur = prev_metrics.get("evalVsHeuristic", {}) or {}
+                eval_rush = prev_metrics.get("evalVsRusher", {}) or {}
         except Exception:
             pass
     last_checkpoint_ep = start_episode
@@ -479,6 +513,8 @@ def train(args: argparse.Namespace) -> None:
             eval_random = evaluate_policy(vec_bridge, model, device, opponent_type="random", num_games=min(4, vec_bridge.num_envs))
         if not eval_heur:
             eval_heur = evaluate_policy(vec_bridge, model, device, opponent_type="heuristic", num_games=min(4, vec_bridge.num_envs))
+        if not eval_rush:
+            eval_rush = evaluate_policy(vec_bridge, model, device, opponent_type="rusher", num_games=min(4, vec_bridge.num_envs))
 
         batch_states: List[np.ndarray] = []
         batch_masks: List[np.ndarray] = []
@@ -756,6 +792,7 @@ def train(args: argparse.Namespace) -> None:
                         "device": str(device),
                         "evalVsRandom": eval_random,
                         "evalVsHeuristic": eval_heur,
+                        "evalVsRusher": eval_rush,
                         "history": history,
                     },
                 )
@@ -832,9 +869,10 @@ def train(args: argparse.Namespace) -> None:
                 session_steps += delta_steps
                 slots[slot].obs = next_obs
 
-        # Final evaluation against Random and Heuristic baselines in parallel
+        # Final evaluation against Random, Heuristic, and Rusher baselines in parallel
         eval_random = evaluate_policy(vec_bridge, model, device, opponent_type="random", num_games=6)
         eval_heur = evaluate_policy(vec_bridge, model, device, opponent_type="heuristic", num_games=6)
+        eval_rush = evaluate_policy(vec_bridge, model, device, opponent_type="rusher", num_games=6)
         print(
             f"[Eval vs Random]    WinRate: {eval_random['win_rate']*100:.1f}% | "
             f"AvgVP: {eval_random['avg_vp']:.1f} vs {eval_random['avg_opp_vp']:.1f}"
@@ -842,6 +880,10 @@ def train(args: argparse.Namespace) -> None:
         print(
             f"[Eval vs Heuristic] WinRate: {eval_heur['win_rate']*100:.1f}% | "
             f"AvgVP: {eval_heur['avg_vp']:.1f} vs {eval_heur['avg_opp_vp']:.1f}"
+        )
+        print(
+            f"[Eval vs Rusher]    WinRate: {eval_rush['win_rate']*100:.1f}% | "
+            f"AvgVP: {eval_rush['avg_vp']:.1f} vs {eval_rush['avg_opp_vp']:.1f}"
         )
 
         final_ep = start_episode + episodes_done
@@ -900,6 +942,7 @@ def train(args: argparse.Namespace) -> None:
                 "device": str(device),
                 "evalVsRandom": eval_random,
                 "evalVsHeuristic": eval_heur,
+                "evalVsRusher": eval_rush,
                 "history": history,
             },
         )
@@ -924,7 +967,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vf-coef", type=float, default=0.5, help="Value loss coefficient")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="Max gradient norm")
     parser.add_argument("--warmstart-steps", type=int, default=600, help="Warmstart imitation steps when starting fresh")
-    parser.add_argument("--opponent", choices=["self", "heuristic", "mixed"], default="mixed")
+    parser.add_argument("--opponent", choices=["self", "heuristic", "rusher", "mixed"], default="mixed")
     parser.add_argument("--bridge-mode", choices=["auto", "http", "stdio", "io"], default="stdio")
     parser.add_argument("--server-url", type=str, default="http://127.0.0.1:8080")
     parser.add_argument("--seed", type=int, default=42)
