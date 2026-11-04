@@ -320,6 +320,7 @@ export class ApiRl extends Handler {
         numWorkers: body.numWorkers,
         envsPerWorker: body.envsPerWorker,
         device: typeof body.device === 'string' ? body.device : undefined,
+        checkpointInterval: typeof body.checkpointInterval === 'number' ? body.checkpointInterval : undefined,
         restart: Boolean(body.restart),
       });
       responses.writeJson(res, ctx, resStatus);

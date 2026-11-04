@@ -267,12 +267,59 @@ def run_warmstart_imitation(
     return float(total_loss.item()) / max(1, updates)
 
 
-def save_metrics_json(metrics_path: str, data: Dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(os.path.abspath(metrics_path)), exist_ok=True)
-    tmp_path = metrics_path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp_path, metrics_path)
+def save_metrics_json(metrics_path: str, data: Dict[str, Any]) -> bool:
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(metrics_path)), exist_ok=True)
+        tmp_path = metrics_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, metrics_path)
+        return True
+    except Exception as e:
+        print(f"[RL Warning] Failed to save metrics to {metrics_path}: {e}")
+        return False
+
+
+def save_checkpoint(
+    pt_path: str,
+    json_path: str,
+    model: MaskedActorCriticNet,
+    optimizer: optim.Optimizer,
+    episode: int,
+    total_steps: int,
+    meta: Dict[str, Any],
+) -> bool:
+    """
+    Saves PyTorch state dict (.pt) and portable weights (.json).
+    Tolerates write/disk errors, logging a warning and continuing without crashing.
+    """
+    ok = True
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(pt_path)), exist_ok=True)
+        tmp_pt = pt_path + ".tmp"
+        torch.save(
+            {
+                "episode": episode,
+                "total_steps": total_steps,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "meta": meta,
+            },
+            tmp_pt,
+        )
+        os.replace(tmp_pt, pt_path)
+    except Exception as e:
+        print(f"[RL Warning] Failed to save checkpoint to {pt_path}: {e}")
+        ok = False
+
+    try:
+        if not model.save_portable_weights(json_path, meta):
+            ok = False
+    except Exception as e:
+        print(f"[RL Warning] Failed to save portable weights to {json_path}: {e}")
+        ok = False
+
+    return ok
 
 
 def resolve_device(requested: str = "auto", force_cpu: bool = False) -> torch.device:
@@ -352,6 +399,8 @@ def train(args: argparse.Namespace) -> None:
     start_episode = 0
     total_steps = 0
     best_score = -1e9
+    last_checkpoint_ep = 0
+    pending_best_save = False
     history: List[Dict[str, Any]] = []
     eval_random: Dict[str, Any] = {}
     eval_heur: Dict[str, Any] = {}
@@ -368,6 +417,7 @@ def train(args: argparse.Namespace) -> None:
                 eval_heur = prev_metrics.get("evalVsHeuristic", {}) or {}
         except Exception:
             pass
+    last_checkpoint_ep = start_episode
 
     loaded_existing = False
     if os.path.exists(latest_pt) and not args.fresh:
@@ -407,9 +457,12 @@ def train(args: argparse.Namespace) -> None:
             ws_loss = run_warmstart_imitation(vec_bridge.workers[0], model, optimizer, device, args.warmstart_steps)
             print(f"[RL] Warm-start completed (loss={ws_loss:.4f}). Exporting initial policy weights...")
             meta = {"version": 1, "step": total_steps, "episodes": start_episode, "winRate": 0.5, "avgVp": 72.0}
-            model.save_portable_weights(latest_json, meta)
-            if not os.path.exists(best_json):
-                model.save_portable_weights(best_json, meta)
+            try:
+                model.save_portable_weights(latest_json, meta)
+                if not os.path.exists(best_json):
+                    model.save_portable_weights(best_json, meta)
+            except Exception as e:
+                print(f"[RL Warning] Failed to export initial warmstart weights: {e}")
 
         episodes_done = 0
         episodes_launched = 0
@@ -623,32 +676,41 @@ def train(args: argparse.Namespace) -> None:
                     "avgVp": round(avg_vp, 2),
                 }
 
-                torch.save(
-                    {
-                        "episode": current_ep,
-                        "total_steps": total_steps,
-                        "model_state_dict": model.state_dict(),
-                        "optimizer_state_dict": optimizer.state_dict(),
-                        "meta": meta,
-                    },
-                    latest_pt,
-                )
-                model.save_portable_weights(latest_json, meta)
-
                 score = avg_vp + 25.0 * win_rate
                 if score >= best_score:
                     best_score = score
-                    torch.save(
-                        {
-                            "episode": current_ep,
-                            "total_steps": total_steps,
-                            "model_state_dict": model.state_dict(),
-                            "optimizer_state_dict": optimizer.state_dict(),
-                            "meta": meta,
-                        },
-                        best_pt,
+                    pending_best_save = True
+
+                interval = args.checkpoint_interval
+                should_save_checkpoint = (
+                    interval <= 0
+                    or episodes_done >= target_episodes
+                    or (current_ep // interval > last_checkpoint_ep // interval)
+                )
+
+                if should_save_checkpoint:
+                    save_checkpoint(
+                        latest_pt,
+                        latest_json,
+                        model,
+                        optimizer,
+                        current_ep,
+                        total_steps,
+                        meta,
                     )
-                    model.save_portable_weights(best_json, meta)
+                    if pending_best_save:
+                        save_checkpoint(
+                            best_pt,
+                            best_json,
+                            model,
+                            optimizer,
+                            current_ep,
+                            total_steps,
+                            meta,
+                        )
+                        pending_best_save = False
+                    last_checkpoint_ep = current_ep
+                    print(f"[RL] Saved checkpoint at episode {current_ep} (step {total_steps})")
 
                 history_entry = {
                     "episode": current_ep,
@@ -785,6 +847,39 @@ def train(args: argparse.Namespace) -> None:
         final_ep = start_episode + episodes_done
         elapsed_final = max(0.1, time.time() - t_start)
         final_sps = int(session_steps / elapsed_final)
+
+        # Ensure final checkpoint is saved if any episodes completed since the last checkpoint
+        if final_ep > last_checkpoint_ep:
+            final_meta = {
+                "version": 1,
+                "step": total_steps,
+                "episodes": final_ep,
+                "winRate": round(float(np.mean(recent_wins)) if recent_wins else 0.5, 4),
+                "avgVp": round(float(np.mean(recent_vps)) if recent_vps else 0.0, 2),
+            }
+            save_checkpoint(
+                latest_pt,
+                latest_json,
+                model,
+                optimizer,
+                final_ep,
+                total_steps,
+                final_meta,
+            )
+            if pending_best_save:
+                save_checkpoint(
+                    best_pt,
+                    best_json,
+                    model,
+                    optimizer,
+                    final_ep,
+                    total_steps,
+                    final_meta,
+                )
+                pending_best_save = False
+            last_checkpoint_ep = final_ep
+            print(f"[RL] Saved final checkpoint at episode {final_ep} (step {total_steps})")
+
         save_metrics_json(
             metrics_path,
             {
@@ -815,6 +910,7 @@ def train(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train Terraforming Mars RL Agent (Tharsis 2P, Base+CE+Prelude)")
     parser.add_argument("--episodes", type=int, default=40, help="Number of episodes to train")
+    parser.add_argument("--checkpoint-interval", type=int, default=100, help="Save checkpoint every N episodes (default: 100)")
     parser.add_argument("--num-workers", type=int, default=max(2, os.cpu_count() or 2), help="Number of parallel Node.js worker processes")
     parser.add_argument("--envs-per-worker", type=int, default=4, help="Environments per worker process")
     parser.add_argument("--ppo-batch-steps", type=int, default=1024, help="Steps per PPO update")

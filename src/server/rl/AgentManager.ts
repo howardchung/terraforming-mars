@@ -526,6 +526,7 @@ export class AgentManager {
     envsPerWorker?: number;
     /** Torch device for training: 'auto' (CUDA if available), 'cpu', 'cuda', 'cuda:N' or 'mps'. */
     device?: string;
+    checkpointInterval?: number;
     restart?: boolean;
   } = {}): {running: boolean; pid?: number; message: string; numWorkers: number; envsPerWorker: number; parallelEnvs: number} {
     if (this.trainingProcess && this.trainingProcess.exitCode === null) {
@@ -588,6 +589,9 @@ export class AgentManager {
     ];
     if (options.device !== undefined && /^(auto|cpu|mps|cuda(:\d+)?)$/.test(options.device)) {
       args.push('--device', options.device);
+    }
+    if (options.checkpointInterval !== undefined && Number(options.checkpointInterval) > 0) {
+      args.push('--checkpoint-interval', String(options.checkpointInterval));
     }
 
     this.trainingLogs = [`[${new Date().toISOString()}] Starting parallel training (${numWorkers} workers × ${envsPerWorker} envs = ${parallelEnvs} parallel games): python3 ${args.join(' ')}`];

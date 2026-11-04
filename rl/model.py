@@ -117,13 +117,18 @@ class MaskedActorCriticNet(nn.Module):
             "critic_bias_b64": _tensor_to_b64_f32(self.critic.bias),
         }
 
-    def save_portable_weights(self, json_path: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        os.makedirs(os.path.dirname(os.path.abspath(json_path)), exist_ok=True)
-        payload = self.export_weights_dict(metadata)
-        tmp_path = json_path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f)
-        os.replace(tmp_path, json_path)
+    def save_portable_weights(self, json_path: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(json_path)), exist_ok=True)
+            payload = self.export_weights_dict(metadata)
+            tmp_path = json_path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            os.replace(tmp_path, json_path)
+            return True
+        except Exception as e:
+            print(f"[RL Warning] Failed to save portable weights to {json_path}: {e}")
+            return False
 
     def load_portable_weights(self, json_path: str) -> Dict[str, Any]:
         with open(json_path, "r", encoding="utf-8") as f:
