@@ -1,3 +1,4 @@
+import base64
 from concurrent.futures import ThreadPoolExecutor
 import http.client
 import json
@@ -5,6 +6,36 @@ import os
 import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
+
+import numpy as np
+
+ACTION_DIM = 605
+
+
+def _decode_compact_obs(obs: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Converts a compact stdio observation (`stateB64` float32, no mask) into numpy arrays.
+    `obs["state"]` becomes a float32 array and `obs["mask"]` a bool array rebuilt from
+    `legalActionIndices`, so callers can use either format interchangeably.
+    """
+    b64 = obs.pop("stateB64", None)
+    if b64 is not None:
+        obs["state"] = np.frombuffer(base64.b64decode(b64), dtype="<f4")
+        mask = np.zeros(ACTION_DIM, dtype=bool)
+        legal = obs.get("legalActionIndices")
+        if legal:
+            mask[legal] = True
+        obs["mask"] = mask
+    return obs
+
+
+def _decode_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    for r in results:
+        if "obs" in r:
+            _decode_compact_obs(r["obs"])
+        if "terminalObs" in r:
+            _decode_compact_obs(r["terminalObs"])
+    return results
 
 
 class TerraformingMarsBridge:
@@ -141,9 +172,10 @@ class TerraformingMarsBridge:
                     "playerNames": list(player_names) if player_names else None,
                     "autoOpponent": auto_opponent,
                     "autoOpponentSeat": auto_opponent_seat,
+                    "compact": True,
                 }
             )
-            return res["obs"]
+            return _decode_compact_obs(res["obs"])
 
     def batch_reset(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if self.mode == "http":
@@ -157,8 +189,8 @@ class TerraformingMarsBridge:
                 results.append({"obs": obs})
             return results
         else:
-            res = self._stdio_send({"cmd": "batch_reset", "items": items})
-            return res["results"]
+            res = self._stdio_send({"cmd": "batch_reset", "items": items, "compact": True})
+            return _decode_results(res["results"])
 
     def step(
         self,
@@ -184,9 +216,10 @@ class TerraformingMarsBridge:
                     "action": int(action_index),
                     "autoOpponent": auto_opponent,
                     "autoOpponentSeat": auto_opponent_seat,
+                    "compact": True,
                 }
             )
-            return res["obs"]
+            return _decode_compact_obs(res["obs"])
 
     def heuristic_action(self, env_id: str) -> int:
         if self.mode == "http":
@@ -216,9 +249,10 @@ class TerraformingMarsBridge:
                     "cmd": "batch_step",
                     "items": items,
                     "autoReset": auto_reset,
+                    "compact": True,
                 }
             )
-            return res["results"]
+            return _decode_results(res["results"])
 
     def close(self) -> None:
         if self.http_conn is not None:

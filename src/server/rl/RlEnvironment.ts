@@ -69,6 +69,9 @@ export interface StepObservation {
   };
 }
 
+/** StepObservation with the state as base64-encoded little-endian float32 and no mask. */
+export type CompactStepObservation = Omit<StepObservation, 'state' | 'mask'> & {stateB64: string};
+
 function computePlayerProgress(
   player: IPlayer,
   vpTotal: number,
@@ -128,6 +131,12 @@ export class RlGameEnvironment {
   }
 
   public reset(seed?: number, playerNames?: [string, string] | null): StepObservation {
+    this.resetGame(seed, playerNames);
+    return this.getObservation();
+  }
+
+  /** Starts a new game without building an observation. Call observe() afterwards. */
+  public resetGame(seed?: number, playerNames?: [string, string] | null): void {
     const names: [string, string] = playerNames ?? ['RL-Agent-1', 'RL-Agent-2'];
     if (this.game !== undefined) {
       if (this.registerInGameLoader) {
@@ -189,8 +198,6 @@ export class RlGameEnvironment {
     this.pendingRewards = [0, 0];
     this.terminalAssigned = false;
     this.stepsCount = 0;
-
-    return this.getObservation();
   }
 
   public getActivePlayerIndex(): number {
@@ -279,15 +286,37 @@ export class RlGameEnvironment {
     if (this.isDone()) {
       return this.getObservation();
     }
+    this.applyAction(actionIndex);
+    return this.observe();
+  }
+
+  /** Decoded action space for the currently active player (cached until the next action). */
+  public getDecoded(): DecodedActionSpace {
+    if (this.lastDecoded === undefined) {
+      const pIdx = this.getActivePlayerIndex();
+      this.lastDecoded = decodeActionSpace(this.players[pIdx], this.stagings[pIdx]);
+    }
+    return this.lastDecoded;
+  }
+
+  /**
+   * Applies an action without building an observation. Used for auto-opponent moves whose
+   * observations would be discarded. Dense rewards are computed lazily in observe(); because
+   * the shaped reward is a linear function of snapshot differences, the accumulated value for
+   * the observing player is the same as updating after every step.
+   */
+  public applyAction(actionIndex: number): void {
+    if (this.isDone()) {
+      return;
+    }
 
     const pIdx = this.getActivePlayerIndex();
     const player = this.players[pIdx];
-    const staging = this.stagings[pIdx];
-    const decoded = this.lastDecoded ?? decodeActionSpace(player, staging);
+    const decoded = this.getDecoded();
 
     let binding = decoded.bindings.get(actionIndex);
     if (binding === undefined) {
-      const firstLegal = Array.from(decoded.bindings.values())[0];
+      const firstLegal = decoded.bindings.values().next().value;
       binding = firstLegal;
     }
 
@@ -311,21 +340,45 @@ export class RlGameEnvironment {
     }
 
     this.stepsCount++;
-    this.updateDenseRewards();
-    this.maybeAssignTerminalRewards();
+    this.lastDecoded = undefined;
+  }
 
+  /** Updates dense/terminal rewards and returns the observation for the active player. */
+  public observe(): StepObservation {
+    this.syncRewards();
     return this.getObservation();
   }
 
+  /** Brings pending dense/terminal rewards up to date with the current game state. */
+  public syncRewards(): void {
+    this.updateDenseRewards();
+    this.maybeAssignTerminalRewards();
+  }
+
   public getObservation(): StepObservation {
+    const {stateTyped, ...rest} = this.buildObservation();
+    return {...rest, state: Array.from(stateTyped), mask: this.lastDecoded!.mask};
+  }
+
+  /**
+   * Compact observation for the stdio worker: the state vector is sent as base64 float32
+   * and the mask is omitted (it is reconstructible from legalActionIndices). This avoids
+   * boxing 1532 floats into a JS array and is ~10x cheaper to parse in Python.
+   */
+  public getCompactObservation(): CompactStepObservation {
+    const {stateTyped, ...rest} = this.buildObservation();
+    const stateB64 = Buffer.from(stateTyped.buffer, stateTyped.byteOffset, stateTyped.byteLength).toString('base64');
+    return {...rest, stateB64};
+  }
+
+  private buildObservation(): Omit<StepObservation, 'state' | 'mask'> & {stateTyped: Float32Array} {
     const done = this.isDone();
     const winner = done ? this.maybeAssignTerminalRewards() : null;
     const pIdx = this.getActivePlayerIndex();
     const player = this.players[pIdx];
     const staging = this.stagings[pIdx];
 
-    const decoded = decodeActionSpace(player, staging);
-    this.lastDecoded = decoded;
+    const decoded = this.getDecoded();
     const stateTyped = encodeGameState(player, staging, decoded.mask, {
       selfVp: this.cachedVps[pIdx],
       oppVp: this.cachedVps[1 - pIdx],
@@ -354,8 +407,7 @@ export class RlGameEnvironment {
       generation: this.game.generation,
       phase: this.game.phase,
       promptTitle: decoded.promptTitle,
-      state: Array.from(stateTyped),
-      mask: decoded.mask,
+      stateTyped,
       legalActionIndices,
       done,
       rewards,
