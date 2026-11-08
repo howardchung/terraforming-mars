@@ -12,11 +12,11 @@
       </dialog>
     </section>
     <div class="main-container">
-      <StartScreen v-if="screen === 'start-screen'"/>
+      <StartScreen v-if="screen === 'start-screen'" />
       <CreateGameForm
         v-else-if="screen === 'create-game-form'"
       />
-      <LoadGameForm v-else-if="screen === 'load'"/>
+      <LoadGameForm v-else-if="screen === 'load'" />
       <GameHome
         v-else-if="screen === 'game-home' && game !== undefined"
         :game="game"
