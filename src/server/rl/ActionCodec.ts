@@ -212,7 +212,7 @@ export function buildDefaultInputResponse(player: IPlayer, input: PlayerInput): 
     return {type: 'projectCard', card: card.name, payment};
   }
   if (input instanceof SelectStandardProjectToPlay) {
-    const enabledIdx = input.enabled ? input.enabled.findIndex((e) => e) : 0;
+    const enabledIdx = input.config?.enabled ? input.config.enabled.findIndex((e) => e) : 0;
     const card = input.cards[Math.max(0, enabledIdx)];
     const meta = input.extras.get(card.name);
     const payment = solvePaymentForStandardProject(player, card, meta?.overriddenCost, meta?.reserveUnits);
@@ -413,7 +413,7 @@ export function decodeActionSpace(player: IPlayer, staging: PlayerStagingState):
   // 3. Direct SelectProjectCardToPlay
   if (waitingFor instanceof SelectProjectCardToPlay) {
     for (let i = 0; i < waitingFor.cards.length; i++) {
-      if (waitingFor.enabled?.[i] === false) {
+      if (waitingFor.config?.enabled?.[i] === false) {
         continue;
       }
       const card = waitingFor.cards[i];
@@ -430,7 +430,7 @@ export function decodeActionSpace(player: IPlayer, staging: PlayerStagingState):
   // 4. Direct SelectStandardProjectToPlay
   if (waitingFor instanceof SelectStandardProjectToPlay) {
     for (let i = 0; i < waitingFor.cards.length; i++) {
-      if (waitingFor.enabled?.[i] === false) {
+      if (waitingFor.config?.enabled?.[i] === false) {
         continue;
       }
       const sp = waitingFor.cards[i];
@@ -581,7 +581,7 @@ export function decodeActionSpace(player: IPlayer, staging: PlayerStagingState):
 
       if (opt instanceof SelectProjectCardToPlay) {
         for (let i = 0; i < opt.cards.length; i++) {
-          if (opt.enabled?.[i] === false) {
+          if (opt.config?.enabled?.[i] === false) {
             continue;
           }
           const card = opt.cards[i];
@@ -601,7 +601,7 @@ export function decodeActionSpace(player: IPlayer, staging: PlayerStagingState):
 
       if (opt instanceof SelectStandardProjectToPlay) {
         for (let i = 0; i < opt.cards.length; i++) {
-          if (opt.enabled?.[i] === false) {
+          if (opt.config?.enabled?.[i] === false) {
             continue;
           }
           const sp: IStandardProjectCard = opt.cards[i];
