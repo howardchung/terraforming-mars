@@ -204,18 +204,17 @@ describe('CreateGameForm', () => {
     expect(wrapper.vm.boards).deep.eq([BoardName.THARSIS]);
   });
 
-  it('toggling random milestones and awards leaves manual milestones and awards', () => {
+  it('solo games ignore the milestone and award settings', async () => {
     const wrapper = shallowMount(CreateGameForm, {
       ...globalConfig,
     });
     const model = wrapper.vm as unknown as CreateGameModel;
-    model.randomMA = RandomMAOptionType.MANUAL;
-    model.customMA = {milestones: ['Terraformer'], awards: ['Banker']};
-    expect(wrapper.vm.isRandomMAEnabled).is.false;
-
-    wrapper.vm.randomMAToggle();
-    expect(model.randomMA).eq(RandomMAOptionType.LIMITED);
-    expect(model.customMA).is.undefined;
+    model.playersCount = 1;
+    model.goals = {...model.goals, type: 'manual', selected: {milestones: ['Terraformer'], awards: []}};
+    expect(wrapper.vm.hasBlockingValidationErrors).is.false;
+    const config: NewGameConfig | undefined = await wrapper.vm.serializeSettings();
+    expect(config?.randomMA).eq(RandomMAOptionType.NONE);
+    expect(config?.customMA).is.undefined;
   });
 
   it('validates the form settings', () => {
@@ -226,6 +225,15 @@ describe('CreateGameForm', () => {
   it('ignores unknown colony names when validating', () => {
     const errors = validateTwoPlayerGame((model) => model.customColonies = ['Unknown Colony' as ColonyName]);
     expect(errors.coloniesMissingExpansions).deep.eq([]);
+  });
+
+  it('validates hand-picked milestones and awards against the expansions', () => {
+    const errors = validateTwoPlayerGame((model) => {
+      model.expansions.turmoil = false;
+      model.goals = {...model.goals, type: 'manual', selected: {milestones: ['Terraformer'], awards: ['Banker', 'Politician']}};
+    });
+    expect(errors.milestonesMissingExpansions).is.false;
+    expect(errors.awardsMissingExpansions).is.true;
   });
 
   it('disables Create game when there is a blocking error', async () => {
