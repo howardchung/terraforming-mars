@@ -5,7 +5,7 @@ import {CreateGameModel} from './CreateGameModel';
 import {PLAYER_COLORS} from '@/common/Color';
 import {NewPlayerModel} from '@/common/game/NewGameConfig';
 import {CardName} from '@/common/cards/CardName';
-import {cast} from '@/common/utils/utils';
+import {cast, isObject} from '@/common/utils/utils';
 import {CARD_RENAMES} from '@/common/cards/CardRenames';
 import {sanitizeEscapeVelocityOptions} from '@/common/game/escapeVelocity';
 import {BoardName} from '@/common/boards/BoardName';
@@ -14,6 +14,7 @@ import {boardOptions} from '@/common/boards/randomBoardOptions';
 import {fromGameOptions, toGameOptions} from './goals/conversions';
 import {RandomMAOptionType} from '@/common/ma/RandomMAOptionType';
 import {CustomMA} from '@/common/ma/CustomMA';
+import {isShowVP, showVPFromLegacy} from '@/common/game/ShowVP';
 
 function safeBoolean(val: JSONValue): boolean {
   if (typeof val === 'boolean') {
@@ -59,6 +60,15 @@ export class JSONProcessor {
       throw new Error('Unknown milestone/award type: ' + json.randomMA);
     }
 
+    // Older settings have the boolean showOtherPlayersVP instead of showVP.
+    if (json.showVP !== undefined) {
+      if (!isShowVP(json.showVP)) {
+        throw new Error('Unknown showVP value: ' + json.showVP);
+      }
+    } else if (json.showOtherPlayersVP !== undefined) {
+      json.showVP = showVPFromLegacy(safeBoolean(json.showOtherPlayersVP));
+    }
+
     if (json.corporationsDraft !== undefined) {
       this.warnings.push('Corporations draft is no longer available. Future versions might just raise an error, so edit your JSON file.');
     }
@@ -76,7 +86,7 @@ export class JSONProcessor {
     initializeArrayFieldWithBackup(json_constants.OLD_CUSTOM_COLONIES, json_constants.CUSTOM_COLONIES);
     initializeArrayFieldWithBackup(json_constants.OLD_BANNED_CARDS, json_constants.BANNED_CARDS);
     const ev = json.escapeVelocity as JSONObject;
-    if (ev !== undefined && typeof ev === 'object') {
+    if (isObject(ev)) {
       const options = sanitizeEscapeVelocityOptions(ev);
       json.escapeVelocityMode = true;
       json.escapeVelocityBonusSeconds = options.bonusSectionsPerAction;
@@ -148,6 +158,7 @@ export class JSONProcessor {
       'board',
       'escapeVelocity',
       'players',
+      'showOtherPlayersVP',
       'solarPhaseOption',
       'constants',
       // Converted to goals, below.
@@ -161,7 +172,7 @@ export class JSONProcessor {
       }
       if (k in this.model) {
         // This is safe because of the in check, above.
-        (this.model as any)[k] = json[k];
+        Object.assign(this.model, {[k]: json[k]});
       } else {
         this.warnings.push('Unknown property: ' + k);
       }
@@ -207,8 +218,7 @@ export class JSONProcessor {
     // Ensure colors are valid and distinct
     const colors = new Set(players.map((p) => p.color));
     for (const color of colors) {
-      // `as any` is OK here since this just validates `color`.
-      if (PLAYER_COLORS.indexOf(color as any) === -1) {
+      if (!(PLAYER_COLORS as ReadonlyArray<string>).includes(color)) {
         errors.push(color + ' is not a color');
       }
     }

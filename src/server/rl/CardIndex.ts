@@ -42,7 +42,7 @@ export const RL_TRAINING_GAME_OPTIONS: GameOptions = {
   shuffleMapOption: false,
   undoOption: false,
   fastModeOption: false,
-  showOtherPlayersVP: true,
+  showVP: 'all',
   startingCorporations: 2,
   startingPreludes: 4,
   expansions: {

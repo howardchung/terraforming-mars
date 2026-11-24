@@ -23,10 +23,10 @@ import {ICard} from './cards/ICard';
 import {Turmoil} from './turmoil/Turmoil';
 import {AresData} from '../common/ares/AresData';
 import {MoonData} from './moon/MoonData';
-import {SeededRandom} from '../common/utils/Random';
+import {GameRandom} from '../common/utils/Random';
 import {PathfindersData} from './pathfinders/PathfindersData';
 import {GameOptions} from './game/GameOptions';
-import {CorporationDeck, PreludeDeck, ProjectDeck, CeoDeck} from './cards/Deck';
+import {CorporationDeck, PreludeDeck, ProjectDeck, CeoDeck} from '@/server/cards/Decks';
 import {Tag} from '../common/cards/Tag';
 import {Tile} from './Tile';
 import {Logger} from './logs/Logger';
@@ -36,6 +36,7 @@ import {OrOptions} from './inputs/OrOptions';
 import {IStandardProjectCard} from './cards/IStandardProjectCard';
 import {GlobalParameterTracks} from '@/server/boards/GlobalParameterTracks';
 import {Resource} from '@/common/Resource';
+import {isObject} from '@/common/utils/utils';
 
 export interface Score {
   corporation: String;
@@ -48,7 +49,7 @@ export interface IGame extends Logger {
   readonly gameOptions: Readonly<GameOptions>;
   // Game-level data
   lastSaveId: number;
-  readonly rng: SeededRandom;
+  readonly rng: GameRandom;
   readonly spectatorId: SpectatorId;
   deferredActions: DeferredActionsQueue;
   /** Run every deferred action, including any added while running them, and then call `cb`. */
@@ -301,6 +302,6 @@ export interface IGame extends Logger {
   getActionCount(): number;
 }
 
-export function isIGame(object: any): object is IGame {
-  return object !== undefined && object.hasOwnProperty('id') && isGameId(object.id);
+export function isIGame(object: unknown): object is IGame {
+  return isObject(object) && 'id' in object && isGameId(object.id);
 }

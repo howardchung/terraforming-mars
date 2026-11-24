@@ -24,6 +24,7 @@ import {
   GameId,
 } from '../../common/Types';
 import {Server} from '../models/ServerModel';
+import {StrongRandom} from '../../common/utils/Random';
 
 function buildAiStateForGame(game: IGame, manager: AgentManager) {
   const cfg = manager.managedGames.get(game.id);
@@ -285,7 +286,7 @@ export class ApiRl extends Handler {
         firstPlayer,
         spectatorId,
         {...RL_TRAINING_GAME_OPTIONS},
-        Math.random(),
+        StrongRandom.newInstance(),
       );
 
       await ctx.gameLoader.add(game);

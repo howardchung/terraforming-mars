@@ -8,7 +8,8 @@ import {Birds} from '../src/server/cards/base/Birds';
 import {WaterImportFromEuropa} from '../src/server/cards/base/WaterImportFromEuropa';
 import {Phase} from '../src/common/Phase';
 import {addCity, addGreenery, addOcean, doWait, fakeCard, forceGenerationEnd, maxOutOceans, runAllActions, setOxygenLevel, setTemperature, setVenusScaleLevel, testGame} from './TestingUtils';
-import {cast, toName} from '../src/common/utils/utils';
+import {cast, isObject, range, toName} from '../src/common/utils/utils';
+import {SeededRandom, StrongRandom} from '../src/common/utils/Random';
 import {TestPlayer} from './TestPlayer';
 import {SaturnSystems} from '../src/server/cards/corporation/SaturnSystems';
 import {Resource} from '../src/common/Resource';
@@ -24,7 +25,6 @@ import {RandomMAOptionType} from '../src/common/ma/RandomMAOptionType';
 import {SpaceBonus} from '../src/common/boards/SpaceBonus';
 import {TileType} from '../src/common/TileType';
 import {SelectResource} from '../src/server/inputs/SelectResource';
-import {IColony} from '../src/server/colonies/IColony';
 import {IAward} from '../src/server/awards/IAward';
 import {SerializedGame} from '../src/server/SerializedGame';
 import {SelectInitialCards} from '../src/server/inputs/SelectInitialCards';
@@ -59,7 +59,7 @@ describe('Game', () => {
       awards: ['Banker', 'Scientist', 'Thermalist', 'Miner', 'Politician'],
     } as const;
     expect(() => Game.newInstance('gameid', [player, player2], player, 'spectatorid', {randomMA: RandomMAOptionType.MANUAL, customMA: {...customMA, awards: ['Banker']}}))
-      .to.throw('customMA must have 5 awards');
+      .to.throw('You must have between 3 and 8 custom awards');
     expect(() => Game.newInstance('gameid', [player, player2], player, 'spectatorid', {randomMA: RandomMAOptionType.MANUAL, customMA}))
       .to.throw('Politician needs the Turmoil expansion');
   });
@@ -838,6 +838,40 @@ describe('Game', () => {
     expect(oceanSpace.tile!.tileType).to.eq(TileType.NEW_HOLLAND);
   });
 
+  it('round-trips a strong random generator and continues the same sequence', () => {
+    const player = TestPlayer.BLUE.newPlayer();
+    const game = Game.newInstance('gnew', [player], player, 'snew', {}, StrongRandom.newInstance([1, 2, 3, 4]));
+    range(7).forEach(() => game.rng.next());
+    const d = game.serialize();
+    expect(d.rng?.kind).to.eq('sfc32');
+    const loaded = Game.deserialize(d);
+    expect(loaded.rng).to.be.instanceOf(StrongRandom);
+    const before = range(10).map(() => game.rng.next());
+    const after = range(10).map(() => loaded.rng.next());
+    expect(after).to.deep.eq(before);
+  });
+
+  it('loads an older save that carries seed/currentSeed instead of rng', () => {
+    const [game] = testGame(2);
+    const d = game.serialize();
+    // Rewrite the save in the old shape: a 32-bit mulberry32 seed, no `rng`.
+    delete d.rng;
+    d.seed = 0.25;
+    d.currentSeed = Math.floor(0.25 * 4294967296);
+    const loaded = Game.deserialize(d);
+    const legacy = new SeededRandom(0.25, Math.floor(0.25 * 4294967296));
+    expect(range(10).map(() => loaded.rng.next())).to.deep.eq(range(10).map(() => legacy.next()));
+  });
+
+  it('refuses to load a save that has neither rng nor seed', () => {
+    const [game] = testGame(2);
+    const d = game.serialize();
+    delete d.rng;
+    delete d.seed;
+    delete d.currentSeed;
+    expect(() => Game.deserialize(d)).to.throw(/neither rng nor seed/);
+  });
+
   /**
    * ensure as we modify properties we consider
    * serialization. if this fails update SerializedGame
@@ -865,7 +899,6 @@ describe('Game', () => {
       'playersInGenerationOrder',
       'monsInsuranceOwner',
       'resettable',
-      'rng',
       'underworldDraftEnabled',
       'doubleDownPrelude',
       'max',
@@ -873,8 +906,6 @@ describe('Game', () => {
       'standardProjects',
     ];
     const serializedValuesNotInGame: Array<keyof SerializedGame> = [
-      'seed',
-      'currentSeed',
       'createdTimeMs'];
 
     const gameKeys = Object.keys(game);
@@ -905,7 +936,7 @@ describe('Game', () => {
     const player = TestPlayer.BLUE.newPlayer();
     const game = Game.newInstance('gameid', [player], player, 'spectatorid', {pathfindersExpansion: false});
     const serialized = game.serialize();
-    (serialized.gameOptions as any).pathfindersData = undefined;
+    Reflect.set(serialized.gameOptions, 'pathfindersData', undefined);
     const deserialized = Game.deserialize(serialized);
     expect(deserialized.pathfindersData).is.undefined;
   });
@@ -929,6 +960,24 @@ describe('Game', () => {
       penaltyVPPerPeriod: 1,
     });
   });
+
+  const legacyShowVPCases = [
+    {showOtherPlayersVP: true, expected: 'all'},
+    {showOtherPlayersVP: false, expected: 'yours'},
+    {showOtherPlayersVP: undefined, expected: 'yours'},
+  ] as const;
+  for (const {showOtherPlayersVP, expected} of legacyShowVPCases) {
+    it(`deserializing a game converts legacy showOtherPlayersVP ${showOtherPlayersVP} to showVP ${expected}`, () => {
+      const player = TestPlayer.BLUE.newPlayer();
+      const game = Game.newInstance('gameid', [player], player, 'spectatorid');
+      const serialized = game.serialize();
+      Reflect.deleteProperty(serialized.gameOptions, 'showVP');
+      Reflect.set(serialized.gameOptions, 'showOtherPlayersVP', showOtherPlayersVP);
+      const deserialized = Game.deserialize(serialized);
+      expect(deserialized.gameOptions.showVP).eq(expected);
+      expect(deserialized.gameOptions).does.not.have.property('showOtherPlayersVP');
+    });
+  }
 
   it('deserializing a game with legacy colony space ids', () => {
     const player = TestPlayer.BLUE.newPlayer();
@@ -994,9 +1043,6 @@ describe('Game', () => {
   //   const serialized = game.serialize();
   //   expect(serialized.awards[0]).eq('A. Engineer');
   //   expect(serialized.fundedAwards[0].name).eq('A. Engineer');
-
-  //   serialized.awards[0] = 'Engineer' as any;
-  //   serialized.fundedAwards[0].name = 'Engineer' as any;
 
   //   const deserialized = Game.deserialize(serialized);
   //   expect(deserialized.awards[0]).deep.eq(engineer);
@@ -1075,8 +1121,8 @@ describe('Game', () => {
     expect(serialized.milestones[0]).eq('T. Spacefarer');
     expect(serialized.claimedMilestones[0].name).eq('T. Spacefarer');
 
-    serialized.milestones[0] = 'Spacefarer' as any;
-    serialized.claimedMilestones[0].name = 'Spacefarer' as any;
+    Reflect.set(serialized.milestones, 0, 'Spacefarer');
+    Reflect.set(serialized.claimedMilestones[0], 'name', 'Spacefarer');
 
     const deserialized = Game.deserialize(serialized);
     expect(deserialized.milestones[0]).deep.eq(spacefarer);
@@ -1102,8 +1148,8 @@ describe('Game', () => {
     expect(serialized.awards[0]).eq('Suburbian');
     expect(serialized.fundedAwards[0].name).eq('Suburbian');
 
-    serialized.awards[0] = 'Edgedancer' as any;
-    serialized.fundedAwards[0].name = 'Edgedancer' as any;
+    Reflect.set(serialized.awards, 0, 'Edgedancer');
+    Reflect.set(serialized.fundedAwards[0], 'name', 'Edgedancer');
 
     const deserialized = Game.deserialize(serialized);
     expect(deserialized.awards[0]).deep.eq(suburbian);
@@ -1148,7 +1194,6 @@ describe('Game', () => {
   });
 
   it('deserializing a colonies game includes discarded colonies #4522', () => {
-    const toName = (x: IColony) => x.name;
     const player = TestPlayer.BLUE.newPlayer();
     const player2 = TestPlayer.RED.newPlayer();
     const game = Game.newInstance('gameid', [player, player2], player, 'spectatorid', {coloniesExtension: false});
@@ -1442,16 +1487,16 @@ describe('Game', () => {
   });
 });
 
-function assertIsJSON(serialized: any) {
-  for (const field in serialized) {
-    if (serialized.hasOwnProperty(field)) {
-      const val = serialized[field];
-      const type = typeof(val);
-      if (type === 'object') {
-        assertIsJSON(val);
-      } else if (type === 'function') {
-        throw new Error(field + ' is invalid');
-      }
+function assertIsJSON(serialized: unknown) {
+  if (!isObject(serialized)) {
+    return;
+  }
+  for (const [field, val] of Object.entries(serialized)) {
+    const type = typeof(val);
+    if (type === 'object') {
+      assertIsJSON(val);
+    } else if (type === 'function') {
+      throw new Error(field + ' is invalid');
     }
   }
 }

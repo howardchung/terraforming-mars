@@ -1,4 +1,5 @@
 import {Phase} from '../../common/Phase';
+import {SeededRandom} from '../../common/utils/Random';
 import {isPlayerId, isSpectatorId, isGameId, safeCast, GameId, PlayerId, SpectatorId} from '../../common/Types';
 import {GameLoader} from '../database/GameLoader';
 import {Game} from '../Game';
@@ -181,7 +182,7 @@ export class RlGameEnvironment {
       firstPlayer,
       spectatorId,
       {...RL_TRAINING_GAME_OPTIONS},
-      actualSeed,
+      new SeededRandom(actualSeed),
     );
 
     // Avoid synchronous database writes on every turn during fast training,

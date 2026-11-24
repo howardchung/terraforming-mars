@@ -44,6 +44,12 @@ const googleRules = {
   }],
 };
 
+// Prefer a const array of string literals; see src/common/Color.ts.
+const noEnums = {
+  selector: 'TSEnumDeclaration',
+  message: 'Do not add enums. Declare a const array of string literals and derive the type from it, like src/common/Color.ts.',
+};
+
 // Rules from root .eslintrc.js overrides
 const projectRules = {
   'camelcase': 'off',
@@ -57,6 +63,7 @@ const projectRules = {
   'curly': 'error',
   'brace-style': 'error',
   'no-sequences': 'error',
+  'no-restricted-syntax': ['error', noEnums],
 
   // Disabled entries from eslint:recommended
   'no-case-declarations': 'off',
@@ -78,6 +85,7 @@ const pluginRules = {
   '@typescript-eslint/prefer-for-of': 'error',
   '@typescript-eslint/no-non-null-assertion': 'error',
   '@typescript-eslint/no-namespace': 'error',
+  '@typescript-eslint/no-explicit-any': 'error',
   ...vueEssentialRules,
   // Buggy under eslint-plugin-vue 10.8 + ESLint 10 — emits spurious "clear" errors.
   // Project doesn't use template-scoped eslint-disable comments.
@@ -196,7 +204,8 @@ export default [
   {
     files: ['src/server/cards/**/*.ts'],
     rules: {
-      'no-restricted-syntax': ['error', {
+      // Replaces the shared no-restricted-syntax list, so repeat noEnums.
+      'no-restricted-syntax': ['error', noEnums, {
         selector: 'MethodDefinition[key.name="bespokePlay"] CallExpression[callee.property.name="getCardCost"]',
         message: 'Do not call getCardCost() inside bespokePlay() — card payment is already deducted before bespokePlay runs. Pass cost: 0 to space-availability helpers instead.',
       }],
