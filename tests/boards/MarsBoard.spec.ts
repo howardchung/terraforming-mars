@@ -29,7 +29,7 @@ describe('MarsBoard', () => {
     player2 = TestPlayer.RED.newPlayer();
 
     // Rather than create a whole game around this test, I'm mocking data to make the tests pass.
-    const gameOptions: Partial<GameOptions> = {pathfindersExpansion: false};
+    const gameOptions: Partial<GameOptions> = {expansions: {...DEFAULT_GAME_OPTIONS.expansions, pathfinders: false}};
     Reflect.set(player, 'game', {gameOptions});
     Reflect.set(player2, 'game', {gameOptions});
   });
@@ -142,7 +142,7 @@ describe('MarsBoard', () => {
   });
 
   it('getAvailableIsolatedSpaces ignores neutral player cubes', () => {
-    const [game, player] = testGame(2, {pathfindersExpansion: true, starWarsExpansion: true});
+    const [game, player] = testGame(2, {expansions: {pathfinders: true}});
     const board = game.board;
     const space = board.getSpaceOrThrow('15');
     const adjacent = board.getAdjacentSpaces(space)[0];

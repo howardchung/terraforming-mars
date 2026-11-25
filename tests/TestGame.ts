@@ -4,8 +4,35 @@ import {GameOptions} from '../src/server/game/GameOptions';
 import {TestPlayer} from './TestPlayer';
 import {SelectInitialCards} from '../src/server/inputs/SelectInitialCards';
 import {Deck} from '../src/server/cards/Deck';
+import {DEFAULT_EXPANSIONS, Expansions} from '@/common/cards/GameModule';
 
-export type TestGameOptions = GameOptions & {
+/** Per-expansion flags that predate `GameOptions.expansions`. */
+export type LegacyGameOptions = {
+  /** @deprecated Use `expansions.venus`. */
+  venusNextExtension: boolean;
+  /** @deprecated Use `expansions.colonies`. */
+  coloniesExtension: boolean;
+  /** @deprecated Use `expansions.prelude`. */
+  preludeExtension: boolean;
+  /** @deprecated Use `expansions.turmoil`. */
+  turmoilExtension: boolean;
+  /** @deprecated Use `expansions.ares`. */
+  aresExtension: boolean;
+  /** @deprecated Use `expansions.moon`. */
+  moonExpansion: boolean;
+  /** @deprecated Use `expansions.pathfinders`. */
+  pathfindersExpansion: boolean;
+  /** @deprecated Use `expansions.ceo`. */
+  ceoExtension: boolean;
+  /** @deprecated Use `expansions.starwars`. */
+  starWarsExpansion: boolean;
+  /** @deprecated Use `expansions.underworld`. */
+  underworldExpansion: boolean;
+};
+
+export type TestGameOptions = Omit<GameOptions, 'expansions'> & LegacyGameOptions & {
+  /** Expansions to override. The rest come from the legacy flags, or their defaults. */
+  expansions: Partial<Expansions>;
   /* skip initial card selection */
   skipInitialCardSelection: boolean;
   /* skip shuffling when creating the game */
@@ -40,20 +67,38 @@ function createPlayers(count: number, idSuffix: string): Array<TestPlayer> {
 export function testGame(count: number, customOptions?: Partial<TestGameOptions>, idSuffix = ''): [IGame, ...Array<TestPlayer>] {
   const players = createPlayers(count, idSuffix);
 
-  const copy = {...customOptions};
-  if (copy.aresExtension === true && copy.aresHazards === undefined) {
-    copy.aresHazards = false;
-  }
+  const {expansions, ...rest} = customOptions ?? {};
+  // if (copy.aresExtension === true && copy.aresHazards === undefined) {
+  //   copy.aresHazards = false;
+  // }
+
+  const copy: Partial<GameOptions> = {
+    ...rest,
+    expansions: {
+      ...DEFAULT_EXPANSIONS,
+      venus: rest.venusNextExtension ?? false,
+      colonies: rest.coloniesExtension ?? false,
+      prelude: rest.preludeExtension ?? false,
+      turmoil: rest.turmoilExtension ?? false,
+      ares: rest.aresExtension ?? false,
+      moon: rest.moonExpansion ?? false,
+      pathfinders: rest.pathfindersExpansion ?? false,
+      ceo: rest.ceoExtension ?? false,
+      starwars: rest.starWarsExpansion ?? false,
+      underworld: rest.underworldExpansion ?? false,
+      ...expansions,
+    },
+  };
 
   const shuffle = Deck.shuffle;
   try {
     if (customOptions?.skipInitialShuffling) {
       Deck.shuffle = () => {};
     }
-    const game = Game.newInstance(`game-id${idSuffix}`, players, players[0], `spectator-id${idSuffix}`, customOptions);
+    const game = Game.newInstance(`game-id${idSuffix}`, players, players[0], `spectator-id${idSuffix}`, copy);
     if (customOptions?.skipInitialCardSelection !== false) {
       for (const player of players) {
-      /* Removes waitingFor if it is SelectInitialCards. Used when wanting it cleared out for further testing. */
+        /* Removes waitingFor if it is SelectInitialCards. Used when wanting it cleared out for further testing. */
         if (player.getWaitingFor() instanceof SelectInitialCards) {
           player.popWaitingFor();
         }
