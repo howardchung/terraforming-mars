@@ -191,10 +191,22 @@ export class PolicyNetwork {
     }
   }
 
-  public forward(state: Float32Array): {logits: Float32Array; value: number} {
+  private computeHidden(state: Float32Array): Float32Array {
     const H = this.hiddenDim;
     const S = this.stateDim;
-    const A = this.actionDim;
+
+    // Collect non-zero input indices once (~90% of the state vector is sparse)
+    const nzIdx = new Int32Array(S);
+    const nzVal = new Float32Array(S);
+    let nzCount = 0;
+    for (let j = 0; j < S; j++) {
+      const v = state[j];
+      if (v !== 0) {
+        nzIdx[nzCount] = j;
+        nzVal[nzCount] = v;
+        nzCount++;
+      }
+    }
 
     // Layer 1: h1 = ReLU(fc1Weight * state + fc1Bias)
     const h1 = new Float32Array(H);
@@ -203,13 +215,23 @@ export class PolicyNetwork {
     for (let i = 0; i < H; i++) {
       let sum = b1[i];
       const rowOffset = i * S;
-      for (let j = 0; j < S; j++) {
-        const v = state[j];
-        if (v !== 0) {
-          sum += w1[rowOffset + j] * v;
-        }
+      for (let k = 0; k < nzCount; k++) {
+        sum += w1[rowOffset + nzIdx[k]] * nzVal[k];
       }
       h1[i] = sum > 0 ? sum : 0;
+    }
+
+    // Collect active ReLU neurons in h1 once before Layer 2
+    const h1Idx = new Int32Array(H);
+    const h1Val = new Float32Array(H);
+    let h1Count = 0;
+    for (let j = 0; j < H; j++) {
+      const v = h1[j];
+      if (v > 0) {
+        h1Idx[h1Count] = j;
+        h1Val[h1Count] = v;
+        h1Count++;
+      }
     }
 
     // Layer 2: h2 = ReLU(fc2Weight * h1 + fc2Bias)
@@ -219,13 +241,31 @@ export class PolicyNetwork {
     for (let i = 0; i < H; i++) {
       let sum = b2[i];
       const rowOffset = i * H;
-      for (let j = 0; j < H; j++) {
-        const v = h1[j];
-        if (v !== 0) {
-          sum += w2[rowOffset + j] * v;
-        }
+      for (let k = 0; k < h1Count; k++) {
+        sum += w2[rowOffset + h1Idx[k]] * h1Val[k];
       }
       h2[i] = sum > 0 ? sum : 0;
+    }
+
+    return h2;
+  }
+
+  public forward(state: Float32Array): {logits: Float32Array; value: number} {
+    const H = this.hiddenDim;
+    const A = this.actionDim;
+    const h2 = this.computeHidden(state);
+
+    // Collect active neurons in h2 once before actor/critic heads
+    const h2Idx = new Int32Array(H);
+    const h2Val = new Float32Array(H);
+    let h2Count = 0;
+    for (let j = 0; j < H; j++) {
+      const v = h2[j];
+      if (v > 0) {
+        h2Idx[h2Count] = j;
+        h2Val[h2Count] = v;
+        h2Count++;
+      }
     }
 
     // Actor head: logits = actorWeight * h2 + actorBias
@@ -235,8 +275,8 @@ export class PolicyNetwork {
     for (let i = 0; i < A; i++) {
       let sum = ba[i];
       const rowOffset = i * H;
-      for (let j = 0; j < H; j++) {
-        sum += wa[rowOffset + j] * h2[j];
+      for (let k = 0; k < h2Count; k++) {
+        sum += wa[rowOffset + h2Idx[k]] * h2Val[k];
       }
       logits[i] = sum;
     }
@@ -244,8 +284,8 @@ export class PolicyNetwork {
     // Critic head: value = criticWeight . h2 + criticBias[0]
     let value = this.criticBias[0];
     const wc = this.criticWeight;
-    for (let j = 0; j < H; j++) {
-      value += wc[j] * h2[j];
+    for (let k = 0; k < h2Count; k++) {
+      value += wc[h2Idx[k]] * h2Val[k];
     }
 
     return {logits, value};
@@ -253,42 +293,15 @@ export class PolicyNetwork {
 
   public forwardValue(state: Float32Array): number {
     const H = this.hiddenDim;
-    const S = this.stateDim;
-
-    const h1 = new Float32Array(H);
-    const w1 = this.fc1Weight;
-    const b1 = this.fc1Bias;
-    for (let i = 0; i < H; i++) {
-      let sum = b1[i];
-      const rowOffset = i * S;
-      for (let j = 0; j < S; j++) {
-        const v = state[j];
-        if (v !== 0) {
-          sum += w1[rowOffset + j] * v;
-        }
-      }
-      h1[i] = sum > 0 ? sum : 0;
-    }
-
-    const h2 = new Float32Array(H);
-    const w2 = this.fc2Weight;
-    const b2 = this.fc2Bias;
-    for (let i = 0; i < H; i++) {
-      let sum = b2[i];
-      const rowOffset = i * H;
-      for (let j = 0; j < H; j++) {
-        const v = h1[j];
-        if (v !== 0) {
-          sum += w2[rowOffset + j] * v;
-        }
-      }
-      h2[i] = sum > 0 ? sum : 0;
-    }
+    const h2 = this.computeHidden(state);
 
     let value = this.criticBias[0];
     const wc = this.criticWeight;
     for (let j = 0; j < H; j++) {
-      value += wc[j] * h2[j];
+      const v = h2[j];
+      if (v > 0) {
+        value += wc[j] * v;
+      }
     }
     return value;
   }

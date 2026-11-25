@@ -4,8 +4,10 @@ import {Database} from '../../src/server/database/Database';
 import {decodeActionSpace} from '../../src/server/rl/ActionCodec';
 import {AgentManager} from '../../src/server/rl/AgentManager';
 import {determinizeSerializedGame, MctsSearch} from '../../src/server/rl/MctsSearch';
+import {MctsWorkerPool} from '../../src/server/rl/MctsWorkerPool';
 import {PolicyNetwork} from '../../src/server/rl/PolicyNetwork';
 import {RlGameEnvironment, selectHeuristicAction} from '../../src/server/rl/RlEnvironment';
+import {encodeGameState} from '../../src/server/rl/StateEncoder';
 
 describe('MctsSearch (Determinized PUCT MCTS)', function() {
   // eslint-disable-next-line no-invalid-this
@@ -147,6 +149,83 @@ describe('MctsSearch (Determinized PUCT MCTS)', function() {
     } finally {
       manager.mctsSearch.config.maxSimulations = origMaxSims;
       manager.mctsSearch.config.timeBudgetMs = origBudget;
+    }
+  });
+
+  it('keeps sparse PolicyNetwork forward and forwardValue numerically identical', () => {
+    const env = new RlGameEnvironment('mcts_sparse_net_test', false);
+    env.resetGame(555, ['Sparse-Red', 'Sparse-Blue']);
+    advanceToActionPhase(env);
+
+    const activeIdx = env.getActivePlayerIndex();
+    const stateVec = encodeGameState(env.players[activeIdx], env.stagings[activeIdx]);
+    const net = new PolicyNetwork();
+
+    const full = net.forward(stateVec);
+    const valOnly = net.forwardValue(stateVec);
+
+    expect(Math.abs(full.value - valOnly)).to.be.lessThan(1e-5);
+    expect(full.logits.length).to.eq(net.actionDim);
+  });
+
+  it('executes MCTS asynchronously via MctsWorkerPool and AgentManager.stepOneAiTurnInGameAsync', async () => {
+    const env = new RlGameEnvironment('mcts_worker_test', false);
+    env.resetGame(888, ['Worker-Red', 'Worker-Blue']);
+    advanceToActionPhase(env);
+
+    const activeIdx = env.getActivePlayerIndex();
+    const player = env.players[activeIdx];
+    const staging = env.stagings[activeIdx];
+    const decoded = decodeActionSpace(player, staging);
+    const legalIndices = decoded.mask
+      .map((ok, idx) => (ok ? idx : -1))
+      .filter((idx) => idx >= 0);
+
+    const net = new PolicyNetwork();
+    const pool = new MctsWorkerPool(net, {
+      maxSimulations: 8,
+      timeBudgetMs: 5000,
+      maxDepth: 6,
+      seed: 123,
+    });
+
+    try {
+      const result = await pool.searchAsync(env.game, player, staging, decoded);
+      expect(legalIndices).to.include(result.actionIndex);
+      expect(result.simulationsRun).to.be.greaterThan(0);
+      expect(result.usedFallback).to.be.false;
+      expect(result.winProbability).to.be.within(0, 1);
+    } finally {
+      await pool.shutdown();
+    }
+
+    // Also test non-blocking AgentManager.stepOneAiTurnInGameAsync
+    const manager = AgentManager.getInstance();
+    const origMaxSims = manager.mctsWorkerPool.config.maxSimulations;
+    const origBudget = manager.mctsWorkerPool.config.timeBudgetMs;
+    manager.mctsWorkerPool.config.maxSimulations = 6;
+    manager.mctsWorkerPool.config.timeBudgetMs = 3000;
+
+    try {
+      const cfg = manager.registerGame(
+        env.game,
+        [
+          {playerId: env.players[0].id, policyType: 'mcts'},
+          {playerId: env.players[1].id, policyType: 'mcts'},
+        ],
+        {mode: 'ai_vs_ai', paused: true},
+      );
+
+      const stepped = await manager.stepOneAiTurnInGameAsync(env.game, cfg);
+      expect(stepped).to.be.true;
+      expect(cfg.lastDecision).to.not.be.undefined;
+      expect(cfg.lastDecision?.policyType).to.eq('mcts');
+
+      manager.managedGames.delete(env.game.id);
+    } finally {
+      manager.mctsWorkerPool.config.maxSimulations = origMaxSims;
+      manager.mctsWorkerPool.config.timeBudgetMs = origBudget;
+      await manager.mctsWorkerPool.shutdown();
     }
   });
 });

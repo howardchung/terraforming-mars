@@ -13,6 +13,7 @@ import {
   PlayerStagingState,
 } from './ActionCodec';
 import {MctsSearch} from './MctsSearch';
+import {MctsWorkerPool} from './MctsWorkerPool';
 import {PolicyNetwork, SerializedModelWeights} from './PolicyNetwork';
 import {RlGameEnvironment, scoreHeuristicActions, scoreRusherActions, StepObservation} from './RlEnvironment';
 import {encodeGameState} from './StateEncoder';
@@ -95,8 +96,10 @@ export class AgentManager {
 
   public readonly policyNet: PolicyNetwork;
   public readonly mctsSearch: MctsSearch;
+  public readonly mctsWorkerPool: MctsWorkerPool;
   public readonly managedGames = new Map<GameId, ManagedGameAiConfig>();
   public readonly trainingEnvs = new Map<string, RlGameEnvironment>();
+  private readonly mctsInFlight = new Set<GameId>();
   private loopTimer: NodeJS.Timeout | undefined;
   private trainingProcess: ChildProcess | null = null;
   private trainingLogs: Array<string> = [];
@@ -117,6 +120,7 @@ export class AgentManager {
   private constructor() {
     this.policyNet = new PolicyNetwork();
     this.mctsSearch = new MctsSearch(this.policyNet);
+    this.mctsWorkerPool = new MctsWorkerPool(this.policyNet);
     this.reloadWeightsIfAvailable();
     this.startLoop();
   }
@@ -225,7 +229,7 @@ export class AgentManager {
     this.reloadWeightsIfAvailable();
     const now = Date.now();
     for (const [gameId, cfg] of this.managedGames.entries()) {
-      if (cfg.paused || cfg.mode === 'training') {
+      if (cfg.paused || cfg.mode === 'training' || this.mctsInFlight.has(gameId)) {
         continue;
       }
       if (now - cfg.lastStepAt < cfg.delayMs) {
@@ -235,7 +239,158 @@ export class AgentManager {
       if (!game || game.phase === Phase.END) {
         continue;
       }
-      this.stepOneAiTurnInGame(game, cfg);
+      const waitingAi = this.findWaitingAiPlayer(game, cfg);
+      if (!waitingAi) {
+        continue;
+      }
+      if (waitingAi.policyType === 'mcts') {
+        void this.stepOneAiTurnInGameAsync(game, cfg);
+      } else {
+        this.stepOneAiTurnInGame(game, cfg);
+      }
+    }
+  }
+
+  private findWaitingAiPlayer(
+    game: IGame,
+    cfg: ManagedGameAiConfig,
+  ): {player: IPlayer; policyType: AgentPolicyType} | undefined {
+    const activePolicy = cfg.aiPlayers.get(game.activePlayer.id);
+    if (activePolicy !== undefined && game.activePlayer.getWaitingFor() !== undefined) {
+      return {player: game.activePlayer, policyType: activePolicy};
+    }
+    for (const p of game.playersInGenerationOrder) {
+      const pPolicy = cfg.aiPlayers.get(p.id);
+      if (pPolicy !== undefined && p.getWaitingFor() !== undefined) {
+        return {player: p, policyType: pPolicy};
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Non-blocking AI turn step that offloads MCTS search to `MctsWorkerPool`.
+   * For non-MCTS policies, delegates directly to `stepOneAiTurnInGame()`.
+   */
+  public async stepOneAiTurnInGameAsync(game: IGame, cfg: ManagedGameAiConfig): Promise<boolean> {
+    if (game.phase === Phase.END || this.mctsInFlight.has(game.id)) {
+      return false;
+    }
+
+    const waitingAi = this.findWaitingAiPlayer(game, cfg);
+    if (!waitingAi) {
+      return false;
+    }
+
+    if (waitingAi.policyType !== 'mcts') {
+      return this.stepOneAiTurnInGame(game, cfg);
+    }
+
+    const targetPlayer = waitingAi.player;
+    let staging = cfg.stagings.get(targetPlayer.id);
+    if (!staging) {
+      staging = createEmptyStagingState();
+      cfg.stagings.set(targetPlayer.id, staging);
+    }
+
+    this.mctsInFlight.add(game.id);
+    try {
+      let subSteps = 0;
+      while (subSteps < 16 && (game.phase as Phase) !== Phase.END && targetPlayer.getWaitingFor() !== undefined) {
+        subSteps++;
+        const waitingForBefore = targetPlayer.getWaitingFor();
+        const decoded = decodeActionSpace(targetPlayer, staging);
+        const legalIndices: Array<number> = [];
+        for (let i = 0; i < decoded.mask.length; i++) {
+          if (decoded.mask[i]) {
+            legalIndices.push(i);
+          }
+        }
+        if (legalIndices.length === 0) {
+          break;
+        }
+
+        const mctsRes = await this.mctsWorkerPool.searchAsync(game, targetPlayer, staging, decoded);
+
+        // Verify game/prompt didn't change while worker was searching
+        if ((game.phase as Phase) === Phase.END || targetPlayer.getWaitingFor() !== waitingForBefore) {
+          return false;
+        }
+
+        const chosenActionIdx = decoded.mask[mctsRes.actionIndex] ? mctsRes.actionIndex : legalIndices[0];
+        const binding = decoded.bindings.get(chosenActionIdx) ?? Array.from(decoded.bindings.values())[0];
+        if (!binding) {
+          break;
+        }
+
+        const topCandidates = mctsRes.topActions.map((ta) => ({
+          label: decoded.bindings.get(ta.actionIndex)?.label ?? `Action #${ta.actionIndex}`,
+          probability: Number(ta.probability.toFixed(3)),
+        }));
+        const availableMoves: Array<AiCandidateAction> = mctsRes.allActions.map((a) => ({
+          actionIndex: a.actionIndex,
+          label: decoded.bindings.get(a.actionIndex)?.label ?? `Action #${a.actionIndex}`,
+          probability: Number((a.probability * 100).toFixed(1)),
+          score: Number(a.qValue.toFixed(3)),
+          isChosen: a.actionIndex === chosenActionIdx,
+        }));
+
+        const response = binding.execute();
+        const winProbability = PolicyNetwork.valueToWinProbability(mctsRes.valueEstimate);
+
+        cfg.stepCounter = (cfg.stepCounter ?? 0) + 1;
+        const decisionRecord: AiDecisionRecord = {
+          step: cfg.stepCounter,
+          turn: cfg.stepCounter,
+          generation: game.generation,
+          timestamp: Date.now(),
+          playerId: targetPlayer.id,
+          playerName: targetPlayer.name,
+          playerColor: targetPlayer.color,
+          policyType: 'mcts',
+          promptTitle: decoded.promptTitle || 'Take Action',
+          chosenLabel: binding.label,
+          chosenAction: chosenActionIdx,
+          probability: Number(mctsRes.probability.toFixed(3)),
+          valueEstimate: Number(mctsRes.valueEstimate.toFixed(3)),
+          winProbability: Number(winProbability.toFixed(3)),
+          topCandidates,
+          availableMoves,
+        };
+
+        cfg.lastDecision = decisionRecord;
+        if (!cfg.decisionHistory) {
+          cfg.decisionHistory = [];
+        }
+        cfg.decisionHistory.push(decisionRecord);
+        if (cfg.decisionHistory.length > 150) {
+          cfg.decisionHistory.shift();
+        }
+        cfg.lastStepAt = Date.now();
+
+        if (response !== undefined) {
+          const prevGameAge = game.gameAge;
+          try {
+            targetPlayer.process(response);
+          } catch (_err) {
+            try {
+              const wf = targetPlayer.getWaitingFor();
+              if (wf !== undefined) {
+                targetPlayer.process(buildDefaultInputResponse(targetPlayer, wf));
+              }
+            } catch (_err2) {
+              // Ignore
+            }
+          }
+          if (game.gameAge === prevGameAge) {
+            game.gameAge++;
+          }
+          return true;
+        }
+      }
+      return false;
+    } finally {
+      this.mctsInFlight.delete(game.id);
     }
   }
 

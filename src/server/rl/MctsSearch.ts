@@ -99,7 +99,47 @@ function shuffleInPlace<T>(arr: Array<T>, rand: () => number): void {
   }
 }
 
-function cloneStagingState(src: PlayerStagingState | undefined, waitingForRef: PlayerStagingState['waitingForRef']): PlayerStagingState {
+export interface SerializableStagingState {
+  initialStage: PlayerStagingState['initialStage'];
+  selectedCorp: PlayerStagingState['selectedCorp'];
+  selectedPreludes: PlayerStagingState['selectedPreludes'];
+  selectedProjects: PlayerStagingState['selectedProjects'];
+  multiCardSelected: PlayerStagingState['multiCardSelected'];
+  inSellPatentsSubstep: boolean;
+  sellPatentsOptIdx: number;
+  selectedUnits: Units;
+}
+
+export function serializeStagingState(src: PlayerStagingState | undefined): SerializableStagingState {
+  if (!src) {
+    const empty = createEmptyStagingState();
+    return {
+      initialStage: empty.initialStage,
+      selectedCorp: empty.selectedCorp,
+      selectedPreludes: [],
+      selectedProjects: [],
+      multiCardSelected: [],
+      inSellPatentsSubstep: false,
+      sellPatentsOptIdx: -1,
+      selectedUnits: Units.of({}),
+    };
+  }
+  return {
+    initialStage: src.initialStage,
+    selectedCorp: src.selectedCorp,
+    selectedPreludes: [...src.selectedPreludes],
+    selectedProjects: [...src.selectedProjects],
+    multiCardSelected: [...src.multiCardSelected],
+    inSellPatentsSubstep: src.inSellPatentsSubstep,
+    sellPatentsOptIdx: src.sellPatentsOptIdx,
+    selectedUnits: Units.of({...src.selectedUnits}),
+  };
+}
+
+function cloneStagingState(
+  src: PlayerStagingState | SerializableStagingState | undefined,
+  waitingForRef: PlayerStagingState['waitingForRef'],
+): PlayerStagingState {
   if (!src) {
     return createEmptyStagingState();
   }
@@ -283,15 +323,15 @@ function applyDecodedAction(player: IPlayer, decoded: DecodedActionSpace, action
   }
 }
 
-function buildFallbackResult(
+function buildFallbackFromMask(
   policyNet: PolicyNetwork,
   stateVec: Float32Array,
-  decoded: DecodedActionSpace,
+  mask: ReadonlyArray<boolean>,
   legalIndices: ReadonlyArray<number>,
   startMs: number,
   temperature: number,
 ): MctsSearchResult {
-  const evalRes = policyNet.evaluate(stateVec, decoded.mask, 'greedy', temperature);
+  const evalRes = policyNet.evaluate(stateVec, mask, 'greedy', temperature);
   const allActions: Array<MctsActionStat> = evalRes.allActions.map((a) => ({
     actionIndex: a.actionIndex,
     visits: 0,
@@ -376,10 +416,10 @@ export class MctsSearch {
       game.phase === Phase.PRELUDES ||
       game.deferredActions.length > 0
     ) {
-      return buildFallbackResult(
+      return buildFallbackFromMask(
         this.policyNet,
         rootStateVec,
-        decoded,
+        decoded.mask,
         legalIndices,
         startMs,
         this.config.priorTemperature,
@@ -390,22 +430,52 @@ export class MctsSearch {
     try {
       baseSerialized = game.serialize();
     } catch (_err) {
-      return buildFallbackResult(
+      return buildFallbackFromMask(
         this.policyNet,
         rootStateVec,
-        decoded,
+        decoded.mask,
         legalIndices,
         startMs,
         this.config.priorTemperature,
       );
     }
 
+    return this.searchFromSerialized(
+      baseSerialized,
+      rootPlayer.id,
+      serializeStagingState(rootStaging),
+      rootStateVec,
+      decoded.mask,
+      legalIndices,
+      startMs,
+    );
+  }
+
+  /**
+   * Run determinized PUCT MCTS starting from a pre-serialized game snapshot.
+   * Used both by `search()` in-process and by `MctsWorker` in a worker thread.
+   */
+  public searchFromSerialized(
+    baseSerialized: SerializedGame,
+    rootPlayerId: PlayerId,
+    rootStaging: SerializableStagingState,
+    rootStateVec: Float32Array,
+    rootMask: ReadonlyArray<boolean>,
+    legalIndices: ReadonlyArray<number>,
+    startMs: number = Date.now(),
+  ): MctsSearchResult {
+    // Strip gameLog once up front so structuredClone doesn't copy log history on every simulation
+    const leanBase: SerializedGame = {
+      ...baseSerialized,
+      gameLog: [],
+    };
+
     const rand = createRng(this.config.seed);
 
     // Evaluate root with PolicyNetwork to initialize root priors
     const rootEval = this.policyNet.evaluate(
       rootStateVec,
-      decoded.mask,
+      rootMask,
       'greedy',
       this.config.priorTemperature,
     );
@@ -434,21 +504,21 @@ export class MctsSearch {
       let cloneId: GameId | undefined;
       try {
         const cloned = instantiateIsolatedClone(
-          baseSerialized,
-          rootPlayer.id,
+          leanBase,
+          rootPlayerId,
           this.config.determinize,
           rand,
         );
         cloneId = cloned.cloneId;
         const simGame = cloned.game;
 
-        const simRootPlayer = simGame.players.find((p) => p.id === rootPlayer.id);
+        const simRootPlayer = simGame.players.find((p) => p.id === rootPlayerId);
         if (!simRootPlayer || simRootPlayer.getWaitingFor() === undefined) {
           if (sim === 0) {
-            return buildFallbackResult(
+            return buildFallbackFromMask(
               this.policyNet,
               rootStateVec,
-              decoded,
+              rootMask,
               legalIndices,
               startMs,
               this.config.priorTemperature,
@@ -459,7 +529,7 @@ export class MctsSearch {
 
         const simStagings = new Map<PlayerId, PlayerStagingState>();
         for (const p of simGame.players) {
-          if (p.id === rootPlayer.id) {
+          if (p.id === rootPlayerId) {
             simStagings.set(p.id, cloneStagingState(rootStaging, p.getWaitingFor()));
           } else {
             simStagings.set(p.id, createEmptyStagingState());
@@ -477,10 +547,10 @@ export class MctsSearch {
             }
           }
           if (overlap < legalIndices.length) {
-            return buildFallbackResult(
+            return buildFallbackFromMask(
               this.policyNet,
               rootStateVec,
-              decoded,
+              rootMask,
               legalIndices,
               startMs,
               this.config.priorTemperature,
@@ -492,10 +562,10 @@ export class MctsSearch {
         simulationsRun++;
       } catch (_err) {
         if (sim === 0 && simulationsRun === 0) {
-          return buildFallbackResult(
+          return buildFallbackFromMask(
             this.policyNet,
             rootStateVec,
-            decoded,
+            rootMask,
             legalIndices,
             startMs,
             this.config.priorTemperature,
@@ -509,10 +579,10 @@ export class MctsSearch {
     }
 
     if (simulationsRun === 0) {
-      return buildFallbackResult(
+      return buildFallbackFromMask(
         this.policyNet,
         rootStateVec,
-        decoded,
+        rootMask,
         legalIndices,
         startMs,
         this.config.priorTemperature,

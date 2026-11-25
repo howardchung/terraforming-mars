@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import Categorical
 
-STATE_DIM = 1532
+STATE_DIM = 2417
 HIDDEN_DIM = 256
 ACTION_DIM = 605
 
@@ -35,7 +35,7 @@ class MaskedActorCriticNet(nn.Module):
     """
     Masked Actor-Critic Neural Network for Terraforming Mars (Tharsis 2P, Base+CE+Prelude).
     Architecture matches src/server/rl/PolicyNetwork.ts bit-for-bit:
-      state (1532) -> Linear(256) -> ReLU -> Linear(256) -> ReLU -> Actor(605) & Critic(1)
+      state (2417) -> Linear(256) -> ReLU -> Linear(256) -> ReLU -> Actor(605) & Critic(1)
     """
 
     def __init__(

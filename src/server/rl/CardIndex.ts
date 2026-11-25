@@ -1,4 +1,5 @@
 import {BoardName} from '../../common/boards/BoardName';
+import {SpaceBonus} from '../../common/boards/SpaceBonus';
 import {CardName} from '../../common/cards/CardName';
 import {Tag} from '../../common/cards/Tag';
 import {SpaceId} from '../../common/Types';
@@ -116,6 +117,39 @@ export const SPACE_ID_TO_OFFSET = new Map<SpaceId, number>(
   THARSIS_SPACE_IDS.map((id, idx) => [id, idx]),
 );
 
+/** Precomputed neighbor offsets for each Tharsis board space (0..62) for O(1) adjacency lookup. */
+export const THARSIS_ADJACENCY: ReadonlyArray<ReadonlyArray<number>> = referenceBoard.spaces.map((space) => {
+  const neighbors: Array<number> = [];
+  for (const adj of referenceBoard.getAdjacentSpaces(space)) {
+    const idx = SPACE_ID_TO_OFFSET.get(adj.id);
+    if (idx !== undefined) {
+      neighbors.push(idx);
+    }
+  }
+  return neighbors;
+});
+
+/** Precomputed weighted placement bonus value per Tharsis space (normalized by / 8.0 in StateEncoder). */
+export const THARSIS_SPACE_BONUS_VALUES: Float32Array = Float32Array.from(
+  referenceBoard.spaces.map((space) => {
+    let val = 0;
+    for (const b of space.bonus) {
+      if (b === SpaceBonus.DRAW_CARD) {
+        val += 3.5;
+      } else if (b === SpaceBonus.TITANIUM) {
+        val += 3.0;
+      } else if (b === SpaceBonus.STEEL) {
+        val += 2.0;
+      } else if (b === SpaceBonus.PLANT) {
+        val += 2.0;
+      } else {
+        val += 1.0;
+      }
+    }
+    return val;
+  }),
+);
+
 export const STANDARD_PROJECT_CARDS: ReadonlyArray<CardName> = [
   CardName.AQUIFER_STANDARD_PROJECT,
   CardName.CITY_STANDARD_PROJECT,
@@ -212,13 +246,13 @@ export const NUM_GENERIC_ACTIONS = 16;
 export const ACTION_SPACE_SIZE = ACTION_OFFSET_GENERIC + NUM_GENERIC_ACTIONS; // 605
 
 /**
- * State Vector Dimension:
- * - Global game features: 25
+ * State Vector Dimension (v2):
+ * - Global game, tempo, differential & prompt features: 45
  * - Milestones & Awards features: 40 (5 * 4 + 5 * 4)
- * - Self player features: 42
- * - Opponent player features: 42
- * - Board spaces features: 315 (63 * 5)
- * - Card channels: 1068 (267 * 4: inHand/selectable, playable, selfTableau, oppTableau)
- * Total = 1532
+ * - Self player features: 50
+ * - Opponent player features: 50
+ * - Board spaces features: 630 (63 * 10: owner/tile + legal target + adjacency + bonus)
+ * - Card channels: 1602 (267 * 6: inHand, selectable/staged, playable, selfTableau, oppTableau, unusedBlueActions)
+ * Total = 2417
  */
-export const STATE_DIM = 25 + 40 + 42 + 42 + (NUM_BOARD_SPACES * 5) + (NUM_TOTAL_CARDS * 4); // 1532
+export const STATE_DIM = 45 + 40 + 50 + 50 + (NUM_BOARD_SPACES * 10) + (NUM_TOTAL_CARDS * 6); // 2417

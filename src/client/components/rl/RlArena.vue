@@ -9,7 +9,7 @@
         </h1>
         <p class="rl-arena-subtitle">
           Map: <strong>Tharsis (2 Players)</strong> · Expansions: <strong>Base + Corporate Era + Preludes</strong> ·
-          State Dim: <strong>{{ status?.stateDim || 1532 }}</strong> · Action Space: <strong>{{ status?.actionSpaceSize || 605 }}</strong>
+          State Dim: <strong>{{ status?.stateDim || 2417 }}</strong> · Action Space: <strong>{{ status?.actionSpaceSize || 605 }}</strong>
         </p>
       </div>
       <div class="rl-header-actions">
@@ -212,7 +212,7 @@
         <div>
           <h2 class="rl-panel-title">🧠 Parallel Reinforcement Learning Training &amp; Neural Network Status</h2>
           <p class="rl-panel-desc">
-            Train the Masked PPO Actor-Critic network (<code>1532 → 256 → 256 → 605</code>) across parallel Node.js worker processes on Tharsis 2P (Base + Corporate Era + Preludes). Weights are exported to <code>rl/checkpoints/</code> and hot-reloaded by the server.
+            Train the Masked PPO Actor-Critic network (<code>2417 → 256 → 256 → 605</code>) across parallel Node.js worker processes on Tharsis 2P (Base + Corporate Era + Preludes). Weights are exported to <code>rl/checkpoints/</code> and hot-reloaded by the server.
           </p>
         </div>
         <div class="rl-train-status-badge">

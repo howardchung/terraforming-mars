@@ -31,7 +31,7 @@ describe('RL Framework (Tharsis 2P Base + Corporate Era + Preludes)', function()
     expect(RL_TRAINING_GAME_OPTIONS.expansions.colonies).to.be.false;
     expect(RL_TRAINING_GAME_OPTIONS.expansions.turmoil).to.be.false;
     expect(ALL_CANONICAL_CARDS.length).to.eq(267);
-    expect(STATE_DIM).to.eq(1532);
+    expect(STATE_DIM).to.eq(2417);
     expect(ACTION_SPACE_SIZE).to.eq(605);
   });
 
@@ -194,5 +194,41 @@ describe('RL Framework (Tharsis 2P Base + Corporate Era + Preludes)', function()
       expect(env.getActivePlayerIndex()).to.be.oneOf([0, 1]);
     }
     expect(steps).to.be.greaterThan(0);
+  });
+
+  it('encodes v2 state features cleanly (prompt stage, board bonuses, separated card channels)', () => {
+    const env = new RlGameEnvironment('test_v2_state_enc', false);
+    const obs = env.reset(2025, ['V2-Red', 'V2-Blue']);
+    expect(obs.state.length).to.eq(STATE_DIM);
+    expect(obs.state.every((v) => Number.isFinite(v))).to.be.true;
+
+    // Initial prompt stage should be 'corp' -> global index 33 (25 + 8 differentials) = 1.0
+    expect(obs.state[33]).to.eq(1.0);
+    // Board bonus channel (slot + 9) should have non-zero entries on empty bonus spaces
+    const boardBase = 45 + 40 + 50 + 50;
+    let nonZeroBonuses = 0;
+    for (let s = 0; s < 63; s++) {
+      if (obs.state[boardBase + s * 10 + 9] > 0) {
+        nonZeroBonuses++;
+      }
+    }
+    expect(nonZeroBonuses).to.be.greaterThan(20);
+
+    // Channel 1 (selectable/staged) should contain dealt initial cards (0.5),
+    // while Channel 0 (in-hand) should be empty during initial selection.
+    const ch0Base = boardBase + 63 * 10;
+    const ch1Base = ch0Base + 267;
+    let ch0Count = 0;
+    let ch1Count = 0;
+    for (let i = 0; i < 267; i++) {
+      if (obs.state[ch0Base + i] > 0) {
+        ch0Count++;
+      }
+      if (obs.state[ch1Base + i] > 0) {
+        ch1Count++;
+      }
+    }
+    expect(ch0Count).to.eq(0);
+    expect(ch1Count).to.be.greaterThan(0);
   });
 });
