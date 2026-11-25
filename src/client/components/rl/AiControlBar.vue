@@ -745,6 +745,7 @@ export default defineComponent({
     },
     formatAgentType(agentType: string | null): string {
       if (agentType === 'rl') return 'RL Policy';
+      if (agentType === 'mcts') return 'MCTS (PUCT)';
       if (agentType === 'heuristic') return 'Heuristic';
       if (agentType === 'rusher') return 'Rusher TR';
       if (agentType === 'random') return 'Random';

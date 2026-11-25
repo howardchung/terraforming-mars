@@ -12,11 +12,12 @@ import {
   decodeActionSpace,
   PlayerStagingState,
 } from './ActionCodec';
+import {MctsSearch} from './MctsSearch';
 import {PolicyNetwork, SerializedModelWeights} from './PolicyNetwork';
 import {RlGameEnvironment, scoreHeuristicActions, scoreRusherActions, StepObservation} from './RlEnvironment';
 import {encodeGameState} from './StateEncoder';
 
-export type AgentPolicyType = 'rl' | 'heuristic' | 'random' | 'rusher';
+export type AgentPolicyType = 'rl' | 'mcts' | 'heuristic' | 'random' | 'rusher';
 
 export interface AiCandidateAction {
   actionIndex: number;
@@ -93,6 +94,7 @@ export class AgentManager {
   private static instance: AgentManager;
 
   public readonly policyNet: PolicyNetwork;
+  public readonly mctsSearch: MctsSearch;
   public readonly managedGames = new Map<GameId, ManagedGameAiConfig>();
   public readonly trainingEnvs = new Map<string, RlGameEnvironment>();
   private loopTimer: NodeJS.Timeout | undefined;
@@ -114,6 +116,7 @@ export class AgentManager {
 
   private constructor() {
     this.policyNet = new PolicyNetwork();
+    this.mctsSearch = new MctsSearch(this.policyNet);
     this.reloadWeightsIfAvailable();
     this.startLoop();
   }
@@ -190,6 +193,9 @@ export class AgentManager {
       lower === 'bot'
     ) {
       return 'rl';
+    }
+    if (lower.startsWith('[mcts]') || lower.startsWith('mcts-') || lower === 'mcts' || lower === 'mcts agent') {
+      return 'mcts';
     }
     if (lower.startsWith('[heuristic]') || lower.startsWith('heuristic-ai')) {
       return 'heuristic';
@@ -305,6 +311,22 @@ export class AgentManager {
           label: decoded.bindings.get(a.actionIndex)?.label ?? `Action #${a.actionIndex}`,
           probability: Number((a.probability * 100).toFixed(1)),
           score: Number(a.logit.toFixed(2)),
+          isChosen: a.actionIndex === chosenActionIdx,
+        }));
+      } else if (policyType === 'mcts') {
+        const mctsRes = this.mctsSearch.search(game, targetPlayer, staging, decoded);
+        chosenActionIdx = mctsRes.actionIndex;
+        probability = mctsRes.probability;
+        valueEstimate = mctsRes.valueEstimate;
+        topCandidates = mctsRes.topActions.map((ta) => ({
+          label: decoded.bindings.get(ta.actionIndex)?.label ?? `Action #${ta.actionIndex}`,
+          probability: Number(ta.probability.toFixed(3)),
+        }));
+        availableMoves = mctsRes.allActions.map((a) => ({
+          actionIndex: a.actionIndex,
+          label: decoded.bindings.get(a.actionIndex)?.label ?? `Action #${a.actionIndex}`,
+          probability: Number((a.probability * 100).toFixed(1)),
+          score: Number(a.qValue.toFixed(3)),
           isChosen: a.actionIndex === chosenActionIdx,
         }));
       } else if (policyType === 'heuristic') {

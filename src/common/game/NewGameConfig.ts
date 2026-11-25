@@ -15,7 +15,7 @@ export interface NewPlayerModel {
   beginner: boolean;
   handicap: number;
   first: boolean;
-  aiType?: 'human' | 'rl' | 'heuristic' | 'random';
+  aiType?: 'human' | 'rl' | 'mcts' | 'heuristic' | 'random' | 'rusher';
 }
 
 export type EscapeVelocityOptions = {

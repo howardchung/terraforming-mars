@@ -242,11 +242,13 @@ export class ApiRl extends Handler {
         const aiLabel =
           ai1Policy === 'rl' ?
             'RL-Agent (PPO)' :
-            ai1Policy === 'heuristic' ?
-              'Heuristic-AI' :
-              ai1Policy === 'rusher' ?
-                'Rusher-AI' :
-                'Random-AI';
+            ai1Policy === 'mcts' ?
+              'MCTS-Agent (PUCT)' :
+              ai1Policy === 'heuristic' ?
+                'Heuristic-AI' :
+                ai1Policy === 'rusher' ?
+                  'Rusher-AI' :
+                  'Random-AI';
         p1 = new Player(humanName, 'red', false, 0, p1Id);
         p2 = new Player(aiLabel, 'blue', false, 0, p2Id);
         aiConfigs.push({playerId: p2Id, policyType: ai1Policy});
@@ -254,19 +256,23 @@ export class ApiRl extends Handler {
         const label1 =
           ai1Policy === 'rl' ?
             'RL-Agent-Alpha' :
-            ai1Policy === 'heuristic' ?
-              'Heuristic-Alpha' :
-              ai1Policy === 'rusher' ?
-                'Rusher-Alpha' :
-                'Random-Alpha';
+            ai1Policy === 'mcts' ?
+              'MCTS-Alpha' :
+              ai1Policy === 'heuristic' ?
+                'Heuristic-Alpha' :
+                ai1Policy === 'rusher' ?
+                  'Rusher-Alpha' :
+                  'Random-Alpha';
         const label2 =
           ai2Policy === 'rl' ?
             'RL-Agent-Beta' :
-            ai2Policy === 'heuristic' ?
-              'Heuristic-Beta' :
-              ai2Policy === 'rusher' ?
-                'Rusher-Beta' :
-                'Random-Beta';
+            ai2Policy === 'mcts' ?
+              'MCTS-Beta' :
+              ai2Policy === 'heuristic' ?
+                'Heuristic-Beta' :
+                ai2Policy === 'rusher' ?
+                  'Rusher-Beta' :
+                  'Random-Beta';
         p1 = new Player(label1, 'red', false, 0, p1Id);
         p2 = new Player(label2, 'blue', false, 0, p2Id);
         aiConfigs.push({playerId: p1Id, policyType: ai1Policy});

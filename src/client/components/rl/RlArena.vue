@@ -36,6 +36,7 @@
             <label>Opponent AI Policy</label>
             <select v-model="humanOpponentType" class="rl-select">
               <option value="rl">RL Agent (Masked PPO Neural Network)</option>
+              <option value="mcts">MCTS Agent (Determinized PUCT + PolicyNet)</option>
               <option value="rusher">Rusher Agent (TR / Fast Terraforming)</option>
               <option value="heuristic">Heuristic Baseline Agent</option>
               <option value="random">Random Valid Action Agent</option>
@@ -72,6 +73,7 @@
             <label>Red Player (Agent 1)</label>
             <select v-model="ai1Type" class="rl-select">
               <option value="rl">RL Agent (Masked PPO Neural Network)</option>
+              <option value="mcts">MCTS Agent (Determinized PUCT + PolicyNet)</option>
               <option value="rusher">Rusher Agent (TR / Fast Terraforming)</option>
               <option value="heuristic">Heuristic Baseline Agent</option>
               <option value="random">Random Valid Action Agent</option>
@@ -81,6 +83,7 @@
             <label>Blue Player (Agent 2)</label>
             <select v-model="ai2Type" class="rl-select">
               <option value="rl">RL Agent (Masked PPO Neural Network)</option>
+              <option value="mcts">MCTS Agent (Determinized PUCT + PolicyNet)</option>
               <option value="rusher">Rusher Agent (TR / Fast Terraforming)</option>
               <option value="heuristic">Heuristic Baseline Agent</option>
               <option value="random">Random Valid Action Agent</option>
