@@ -453,7 +453,7 @@ export class AgentManager {
       let availableMoves: Array<AiCandidateAction> = [];
 
       if (policyType === 'rl') {
-        const evalRes = this.policyNet.evaluate(stateVec, decoded.mask, 'sample', 0.65);
+        const evalRes = this.policyNet.evaluate(stateVec, decoded.mask, 'sample', 0.15);
         chosenActionIdx = evalRes.actionIndex;
         probability = evalRes.probability;
         valueEstimate = evalRes.valueEstimate;

@@ -24,6 +24,12 @@ export interface MctsConfig {
   timeBudgetMs: number;
   /** Exploration constant c_puct for PUCT selection. */
   cPuct: number;
+  /** First Play Urgency reduction subtracted from parent Q for unvisited edges. */
+  fpuReduction: number;
+  /** Maximum number of top-prior actions expanded per node (0 = no pruning). */
+  topK: number;
+  /** Evaluate leaf states symmetrically as 0.5 * (V(self) - V(opp)) for zero-sum backups. */
+  symmetricLeafEval: boolean;
   /** Maximum tree/simulation steps from root before leaf evaluation. */
   maxDepth: number;
   /** Softmax temperature applied to PolicyNetwork priors. */
@@ -40,6 +46,9 @@ export const DEFAULT_MCTS_CONFIG: MctsConfig = {
   maxSimulations: 48,
   timeBudgetMs: 350,
   cPuct: 1.4,
+  fpuReduction: 0.15,
+  topK: 8,
+  symmetricLeafEval: true,
   maxDepth: 12,
   priorTemperature: 1.0,
   visitTemperature: 0.0,
@@ -77,6 +86,8 @@ interface MctsEdge {
 
 interface MctsNode {
   expanded: boolean;
+  visits: number;
+  valueSum: number;
   edges: Map<number, MctsEdge>;
 }
 
@@ -159,8 +170,60 @@ function cloneStagingState(
 function createNode(): MctsNode {
   return {
     expanded: false,
+    visits: 0,
+    valueSum: 0,
     edges: new Map(),
   };
+}
+
+/**
+ * Retain the top-K highest-prior actions (at least 2 if available) and
+ * renormalize their prior probabilities to sum to 1.0.
+ */
+function selectTopKPriors(
+  allActions: ReadonlyArray<{actionIndex: number; probability: number}>,
+  topK: number,
+): Array<{actionIndex: number; prior: number}> {
+  if (allActions.length === 0) {
+    return [];
+  }
+  const limit = topK > 0 ? Math.max(2, topK) : allActions.length;
+  const kept = allActions.slice(0, Math.min(limit, allActions.length));
+  let sum = 0;
+  for (const item of kept) {
+    sum += item.probability;
+  }
+  const norm = sum > 1e-9 ? sum : kept.length;
+  return kept.map((item) => ({
+    actionIndex: item.actionIndex,
+    prior: sum > 1e-9 ? item.probability / norm : 1 / norm,
+  }));
+}
+
+/**
+ * Compute a strictly zero-sum leaf evaluation in [-1, +1] from `actingPlayer`'s
+ * perspective: `0.5 * (V(self) - V(opp))` when `symmetric` is enabled.
+ */
+function evaluateLeafUnitValue(
+  policyNet: PolicyNetwork,
+  actingPlayer: IPlayer,
+  selfRawValue: number,
+  symmetric: boolean,
+  simStagings?: Map<PlayerId, PlayerStagingState>,
+): number {
+  const vSelf = criticValueToUnitScale(selfRawValue);
+  if (!symmetric) {
+    return vSelf;
+  }
+  const opponent = actingPlayer.opponents[0] ??
+    actingPlayer.game.players.find((p) => p.id !== actingPlayer.id);
+  if (!opponent) {
+    return vSelf;
+  }
+  const oppStaging = simStagings?.get(opponent.id) ?? createEmptyStagingState();
+  const oppVec = encodeGameState(opponent, oppStaging);
+  const vOpp = criticValueToUnitScale(policyNet.forwardValue(oppVec));
+  return 0.5 * (vSelf - vOpp);
 }
 
 /**
@@ -472,7 +535,7 @@ export class MctsSearch {
 
     const rand = createRng(this.config.seed);
 
-    // Evaluate root with PolicyNetwork to initialize root priors
+    // Evaluate root with PolicyNetwork and expand top-K candidate priors
     const rootEval = this.policyNet.evaluate(
       rootStateVec,
       rootMask,
@@ -481,10 +544,11 @@ export class MctsSearch {
     );
     const rootNode = createNode();
     rootNode.expanded = true;
-    for (const item of rootEval.allActions) {
+    const rootPriors = selectTopKPriors(rootEval.allActions, this.config.topK);
+    for (const item of rootPriors) {
       rootNode.edges.set(item.actionIndex, {
         actionIndex: item.actionIndex,
-        prior: item.probability,
+        prior: item.prior,
         visits: 0,
         valueSum: 0,
         availabilityVisits: 0,
@@ -647,7 +711,7 @@ export class MctsSearch {
     simStagings: Map<PlayerId, PlayerStagingState>,
     rootNode: MctsNode,
   ): void {
-    const path: Array<{edge: MctsEdge; actingPlayerId: PlayerId}> = [];
+    const path: Array<{node: MctsNode; edge: MctsEdge; actingPlayerId: PlayerId}> = [];
     let currentNode = rootNode;
     let leafPlayerId: PlayerId = simGame.activePlayer.id;
     let leafValue = 0;
@@ -693,44 +757,60 @@ export class MctsSearch {
           this.config.priorTemperature,
         );
         currentNode.expanded = true;
-        for (const item of evalRes.allActions) {
+        const keptPriors = selectTopKPriors(evalRes.allActions, this.config.topK);
+        for (const item of keptPriors) {
           currentNode.edges.set(item.actionIndex, {
             actionIndex: item.actionIndex,
-            prior: item.probability,
+            prior: item.prior,
             visits: 0,
             valueSum: 0,
             availabilityVisits: 0,
             child: undefined,
           });
         }
-        leafValue = criticValueToUnitScale(evalRes.valueEstimate);
+        leafValue = evaluateLeafUnitValue(
+          this.policyNet,
+          actingPlayer,
+          evalRes.valueEstimate,
+          this.config.symmetricLeafEval,
+          simStagings,
+        );
         break;
       }
 
-      // Selection (ISMCTS-PUCT): only consider edges legal in this determinization
+      // Selection (ISMCTS-PUCT with Top-K filtering and First Play Urgency):
+      // Prefer existing top-K edges that are legal in this determinization; only
+      // fall back to adding new legal edges if none of the expanded edges are legal.
       const legalEdges: Array<MctsEdge> = [];
       for (const idx of legalIndices) {
-        let edge = currentNode.edges.get(idx);
-        if (!edge) {
-          // Action became legal in this determinization (e.g. different dealt cards)
-          edge = {
+        const edge = currentNode.edges.get(idx);
+        if (edge) {
+          edge.availabilityVisits++;
+          legalEdges.push(edge);
+        }
+      }
+      if (legalEdges.length === 0) {
+        for (const idx of legalIndices) {
+          const edge: MctsEdge = {
             actionIndex: idx,
             prior: 1 / legalIndices.length,
             visits: 0,
             valueSum: 0,
-            availabilityVisits: 0,
+            availabilityVisits: 1,
             child: undefined,
           };
           currentNode.edges.set(idx, edge);
+          legalEdges.push(edge);
         }
-        edge.availabilityVisits++;
-        legalEdges.push(edge);
       }
+
+      const parentQ = currentNode.visits > 0 ? currentNode.valueSum / currentNode.visits : 0;
+      const fpuValue = Math.max(-1.0, parentQ - this.config.fpuReduction);
 
       let bestEdge = legalEdges[0];
       let bestScore = -Infinity;
       for (const edge of legalEdges) {
-        const q = edge.visits > 0 ? edge.valueSum / edge.visits : 0;
+        const q = edge.visits > 0 ? edge.valueSum / edge.visits : fpuValue;
         const u = this.config.cPuct * edge.prior * Math.sqrt(Math.max(1, edge.availabilityVisits)) / (1 + edge.visits);
         const score = q + u;
         if (score > bestScore) {
@@ -739,12 +819,18 @@ export class MctsSearch {
         }
       }
 
-      path.push({edge: bestEdge, actingPlayerId: actingPlayer.id});
+      path.push({node: currentNode, edge: bestEdge, actingPlayerId: actingPlayer.id});
 
       const ok = applyDecodedAction(actingPlayer, decoded, bestEdge.actionIndex);
       if (!ok) {
         const stateVec = encodeGameState(actingPlayer, staging, decoded.mask);
-        leafValue = criticValueToUnitScale(this.policyNet.forwardValue(stateVec));
+        leafValue = evaluateLeafUnitValue(
+          this.policyNet,
+          actingPlayer,
+          this.policyNet.forwardValue(stateVec),
+          this.config.symmetricLeafEval,
+          simStagings,
+        );
         break;
       }
 
@@ -762,7 +848,13 @@ export class MctsSearch {
           leafPlayerId = nextPlayer.id;
           const nextStaging = simStagings.get(nextPlayer.id) ?? createEmptyStagingState();
           const nextVec = encodeGameState(nextPlayer, nextStaging);
-          leafValue = criticValueToUnitScale(this.policyNet.forwardValue(nextVec));
+          leafValue = evaluateLeafUnitValue(
+            this.policyNet,
+            nextPlayer,
+            this.policyNet.forwardValue(nextVec),
+            this.config.symmetricLeafEval,
+            simStagings,
+          );
         }
       }
     }
@@ -771,6 +863,8 @@ export class MctsSearch {
     for (let i = path.length - 1; i >= 0; i--) {
       const step = path[i];
       const signedValue = step.actingPlayerId === leafPlayerId ? leafValue : -leafValue;
+      step.node.visits++;
+      step.node.valueSum += signedValue;
       step.edge.visits++;
       step.edge.valueSum += signedValue;
     }

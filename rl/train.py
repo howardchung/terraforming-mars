@@ -49,11 +49,17 @@ class SlotState:
     player_names: Tuple[str, str]
     trajectories: Tuple[List[StepRecord], List[StepRecord]]
     obs: Dict[str, Any]
+    use_snapshot_opp: bool = False
 
 
-def make_slot_config(ep_idx: int, opponent_arg: str) -> Tuple[bool, int, int, Optional[str], Tuple[str, str]]:
+def make_slot_config(
+    ep_idx: int,
+    opponent_arg: str,
+    has_snapshots: bool = False,
+) -> Tuple[bool, int, int, Optional[str], Tuple[str, str], bool]:
     rl_seat = ep_idx % 2
     opp_seat = 1 - rl_seat
+    use_snapshot = False
 
     if opponent_arg == "rusher":
         auto_opp = "rusher"
@@ -71,6 +77,38 @@ def make_slot_config(ep_idx: int, opponent_arg: str) -> Tuple[bool, int, int, Op
             if rl_seat == 0
             else ("Heuristic-AI", "RL-Agent (PPO)")
         )
+    elif opponent_arg == "league":
+        # League mix (20-ep cycle): 50% current self-play, 35% historical snapshot, 10% heuristic, 5% rusher
+        mode = ep_idx % 20
+        if mode in (17, 18):
+            auto_opp = "heuristic"
+            is_fixed_opp = True
+            p_names = (
+                ("RL-Agent (PPO)", "Heuristic-AI")
+                if rl_seat == 0
+                else ("Heuristic-AI", "RL-Agent (PPO)")
+            )
+        elif mode == 19:
+            auto_opp = "rusher"
+            is_fixed_opp = True
+            p_names = (
+                ("RL-Agent (PPO)", "Rusher-AI")
+                if rl_seat == 0
+                else ("Rusher-AI", "RL-Agent (PPO)")
+            )
+        elif mode >= 10 and has_snapshots:
+            auto_opp = None
+            is_fixed_opp = True
+            use_snapshot = True
+            p_names = (
+                ("RL-Agent (PPO)", "RL-Snapshot")
+                if rl_seat == 0
+                else ("RL-Snapshot", "RL-Agent (PPO)")
+            )
+        else:
+            auto_opp = None
+            is_fixed_opp = False
+            p_names = ("RL-SelfPlay-Red", "RL-SelfPlay-Blue")
     elif opponent_arg == "mixed":
         # Mixed rotates between pure self-play, heuristic, and rusher
         mode = ep_idx % 3
@@ -99,7 +137,7 @@ def make_slot_config(ep_idx: int, opponent_arg: str) -> Tuple[bool, int, int, Op
         is_fixed_opp = False
         p_names = ("RL-SelfPlay-Red", "RL-SelfPlay-Blue")
 
-    return is_fixed_opp, rl_seat, opp_seat, auto_opp, p_names
+    return is_fixed_opp, rl_seat, opp_seat, auto_opp, p_names, use_snapshot
 
 
 def compute_gae_for_episode(
@@ -526,13 +564,24 @@ def train(args: argparse.Namespace) -> None:
         target_episodes = args.episodes
         num_active_slots = min(vec_bridge.num_envs, target_episodes)
 
+        # Historical snapshot opponent pool for --opponent league (up to 8 frozen checkpoints)
+        snapshot_pool: List[Dict[str, torch.Tensor]] = []
+        snapshot_model: Optional[MaskedActorCriticNet] = None
+        if args.opponent == "league":
+            snapshot_model = MaskedActorCriticNet(STATE_DIM, HIDDEN_DIM, ACTION_DIM).to(device)
+            snapshot_model.eval()
+            snapshot_pool.append({k: v.detach().cpu().clone() for k, v in model.state_dict().items()})
+            snapshot_model.load_state_dict(snapshot_pool[0])
+
         # Initialize all parallel slots
         slots: Dict[int, SlotState] = {}
         init_resets = []
         for slot in range(num_active_slots):
             ep_idx = start_episode + episodes_launched
             episodes_launched += 1
-            use_h, rl_seat, opp_seat, auto_opp, p_names = make_slot_config(ep_idx, args.opponent)
+            use_h, rl_seat, opp_seat, auto_opp, p_names, use_snap = make_slot_config(
+                ep_idx, args.opponent, has_snapshots=len(snapshot_pool) > 0
+            )
             slots[slot] = SlotState(
                 ep_idx=ep_idx,
                 use_heuristic_opp=use_h,
@@ -542,6 +591,7 @@ def train(args: argparse.Namespace) -> None:
                 player_names=p_names,
                 trajectories=([], []),
                 obs={},
+                use_snapshot_opp=use_snap,
             )
             init_resets.append(
                 {
@@ -609,7 +659,9 @@ def train(args: argparse.Namespace) -> None:
                 if episodes_launched < target_episodes:
                     new_ep_idx = start_episode + episodes_launched
                     episodes_launched += 1
-                    use_h, rl_seat, opp_seat, auto_opp, p_names = make_slot_config(new_ep_idx, args.opponent)
+                    use_h, rl_seat, opp_seat, auto_opp, p_names, use_snap = make_slot_config(
+                        new_ep_idx, args.opponent, has_snapshots=len(snapshot_pool) > 0
+                    )
                     slots[slot] = SlotState(
                         ep_idx=new_ep_idx,
                         use_heuristic_opp=use_h,
@@ -619,6 +671,7 @@ def train(args: argparse.Namespace) -> None:
                         player_names=p_names,
                         trajectories=([], []),
                         obs={},
+                        use_snapshot_opp=use_snap,
                     )
                     resets_needed.append(
                         {
@@ -653,6 +706,18 @@ def train(args: argparse.Namespace) -> None:
                 mb_size = min(args.minibatch_size, n_samples)
                 p_losses, v_losses, ent_losses = [], [], []
 
+                # Optional linear LR and entropy coefficient annealing across the run
+                progress = min(1.0, max(0.0, episodes_done / max(1, target_episodes)))
+                if args.lr_end is not None:
+                    cur_lr = args.lr + (args.lr_end - args.lr) * progress
+                    for pg in optimizer.param_groups:
+                        pg["lr"] = cur_lr
+                cur_ent_coef = (
+                    args.ent_coef + (args.ent_coef_end - args.ent_coef) * progress
+                    if args.ent_coef_end is not None
+                    else args.ent_coef
+                )
+
                 for _epoch in range(args.ppo_epochs):
                     perm = torch.randperm(n_samples, device=device)
                     for start in range(0, n_samples, mb_size):
@@ -673,7 +738,7 @@ def train(args: argparse.Namespace) -> None:
                         v_loss = 0.5 * ((new_val - b_ret[mb_idx]) ** 2).mean()
                         ent_loss = entropy.mean()
 
-                        loss = pg_loss - args.ent_coef * ent_loss + args.vf_coef * v_loss
+                        loss = pg_loss - cur_ent_coef * ent_loss + args.vf_coef * v_loss
 
                         optimizer.zero_grad()
                         loss.backward()
@@ -746,6 +811,12 @@ def train(args: argparse.Namespace) -> None:
                         )
                         pending_best_save = False
                     last_checkpoint_ep = current_ep
+                    if snapshot_model is not None:
+                        snapshot_pool.append({k: v.detach().cpu().clone() for k, v in model.state_dict().items()})
+                        if len(snapshot_pool) > 8:
+                            snapshot_pool.pop(0)
+                        chosen_snap = snapshot_pool[int(np.random.randint(0, len(snapshot_pool)))]
+                        snapshot_model.load_state_dict(chosen_snap)
                     print(f"[RL] Saved checkpoint at episode {current_ep} (step {total_steps})")
 
                 history_entry = {
@@ -812,52 +883,88 @@ def train(args: argparse.Namespace) -> None:
             if not active_slot_ids:
                 continue
 
-            states_batch_np = np.empty((len(active_slot_ids), STATE_DIM), dtype=np.float32)
-            masks_batch_np = np.empty((len(active_slot_ids), ACTION_DIM), dtype=bool)
-
-            for i, slot in enumerate(active_slot_ids):
+            model_slots: List[int] = []
+            snap_slots: List[int] = []
+            for slot in active_slot_ids:
                 st = slots[slot]
-                obs = st.obs
-                p_idx = obs["activePlayerIndex"]
-                if len(st.trajectories[p_idx]) > 0:
-                    st.trajectories[p_idx][-1].reward += float(obs["rewards"][p_idx])
-                states_batch_np[i] = obs["state"]
-                masks_batch_np[i] = obs["mask"]
-
-            states_t = torch.from_numpy(states_batch_np).to(device)
-            masks_t = torch.from_numpy(masks_batch_np).to(device)
-            with torch.no_grad():
-                acts_t, lps_t, _ents_t, vals_t = model.get_action_and_value(states_t, masks_t)
-
-            acts_np = acts_t.cpu().numpy()
-            lps_np = lps_t.cpu().numpy()
-            vals_np = vals_t.cpu().numpy()
+                p_idx = st.obs["activePlayerIndex"]
+                if st.use_snapshot_opp and p_idx == st.opp_seat and snapshot_model is not None:
+                    snap_slots.append(slot)
+                else:
+                    model_slots.append(slot)
 
             step_reqs = []
-            for i, slot in enumerate(active_slot_ids):
-                st = slots[slot]
-                obs = st.obs
-                p_idx = obs["activePlayerIndex"]
-                action = int(acts_np[i])
-                st.trajectories[p_idx].append(
-                    StepRecord(
-                        state=states_batch_np[i].copy(),
-                        mask=masks_batch_np[i].copy(),
-                        action=action,
-                        log_prob=float(lps_np[i]),
-                        value=float(vals_np[i]),
-                        reward=0.0,
-                        done=False,
+
+            if model_slots:
+                states_batch_np = np.empty((len(model_slots), STATE_DIM), dtype=np.float32)
+                masks_batch_np = np.empty((len(model_slots), ACTION_DIM), dtype=bool)
+                for i, slot in enumerate(model_slots):
+                    st = slots[slot]
+                    obs = st.obs
+                    p_idx = obs["activePlayerIndex"]
+                    if len(st.trajectories[p_idx]) > 0:
+                        st.trajectories[p_idx][-1].reward += float(obs["rewards"][p_idx])
+                    states_batch_np[i] = obs["state"]
+                    masks_batch_np[i] = obs["mask"]
+
+                states_t = torch.from_numpy(states_batch_np).to(device)
+                masks_t = torch.from_numpy(masks_batch_np).to(device)
+                with torch.no_grad():
+                    acts_t, lps_t, _ents_t, vals_t = model.get_action_and_value(states_t, masks_t)
+
+                acts_np = acts_t.cpu().numpy()
+                lps_np = lps_t.cpu().numpy()
+                vals_np = vals_t.cpu().numpy()
+
+                for i, slot in enumerate(model_slots):
+                    st = slots[slot]
+                    obs = st.obs
+                    p_idx = obs["activePlayerIndex"]
+                    action = int(acts_np[i])
+                    st.trajectories[p_idx].append(
+                        StepRecord(
+                            state=states_batch_np[i].copy(),
+                            mask=masks_batch_np[i].copy(),
+                            action=action,
+                            log_prob=float(lps_np[i]),
+                            value=float(vals_np[i]),
+                            reward=0.0,
+                            done=False,
+                        )
                     )
-                )
-                step_reqs.append(
-                    {
-                        "slot": slot,
-                        "action": action,
-                        "autoOpponent": st.auto_opponent,
-                        "autoOpponentSeat": st.opp_seat,
-                    }
-                )
+                    step_reqs.append(
+                        {
+                            "slot": slot,
+                            "action": action,
+                            "autoOpponent": st.auto_opponent,
+                            "autoOpponentSeat": st.opp_seat,
+                        }
+                    )
+
+            if snap_slots and snapshot_model is not None:
+                snap_states_np = np.empty((len(snap_slots), STATE_DIM), dtype=np.float32)
+                snap_masks_np = np.empty((len(snap_slots), ACTION_DIM), dtype=bool)
+                for i, slot in enumerate(snap_slots):
+                    obs = slots[slot].obs
+                    snap_states_np[i] = obs["state"]
+                    snap_masks_np[i] = obs["mask"]
+
+                snap_states_t = torch.from_numpy(snap_states_np).to(device)
+                snap_masks_t = torch.from_numpy(snap_masks_np).to(device)
+                with torch.no_grad():
+                    snap_acts_t, _, _, _ = snapshot_model.get_action_and_value(snap_states_t, snap_masks_t)
+                snap_acts_np = snap_acts_t.cpu().numpy()
+
+                for i, slot in enumerate(snap_slots):
+                    st = slots[slot]
+                    step_reqs.append(
+                        {
+                            "slot": slot,
+                            "action": int(snap_acts_np[i]),
+                            "autoOpponent": st.auto_opponent,
+                            "autoOpponentSeat": st.opp_seat,
+                        }
+                    )
 
             # 4. Step all active slots in parallel across worker processes
             next_obs_map = vec_bridge.step_slots(step_reqs)
@@ -960,14 +1067,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ppo-epochs", type=int, default=4, help="PPO epochs per rollout batch")
     parser.add_argument("--minibatch-size", type=int, default=256, help="PPO minibatch size")
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument("--lr-end", type=float, default=None, help="Optional final learning rate for linear decay")
     parser.add_argument("--gamma", type=float, default=0.995, help="Discount factor")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="GAE lambda")
     parser.add_argument("--clip-coef", type=float, default=0.2, help="PPO clipping coefficient")
     parser.add_argument("--ent-coef", type=float, default=0.015, help="Entropy bonus coefficient")
+    parser.add_argument("--ent-coef-end", type=float, default=None, help="Optional final entropy coef for linear decay")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="Value loss coefficient")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="Max gradient norm")
     parser.add_argument("--warmstart-steps", type=int, default=600, help="Warmstart imitation steps when starting fresh")
-    parser.add_argument("--opponent", choices=["self", "heuristic", "rusher", "mixed"], default="mixed")
+    parser.add_argument("--opponent", choices=["self", "heuristic", "rusher", "mixed", "league"], default="mixed")
     parser.add_argument("--bridge-mode", choices=["auto", "http", "stdio", "io"], default="stdio")
     parser.add_argument("--server-url", type=str, default="http://127.0.0.1:8080")
     parser.add_argument("--seed", type=int, default=42)
